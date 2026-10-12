@@ -35,6 +35,17 @@ object Store {
     fun setClassicBest(v: Int) {
         sp!!.edit().putInt("classic_best", v).apply()
     }
+
+    // saved Classic game (so it can be continued later)
+    fun saveGame(s: String) {
+        sp!!.edit().putString("classic_save", s).apply()
+    }
+
+    fun loadGame(): String? = sp!!.getString("classic_save", null)
+
+    fun clearGame() {
+        sp!!.edit().remove("classic_save").apply()
+    }
 }
 
 // simple crown drawn with the colour already set on the paint
