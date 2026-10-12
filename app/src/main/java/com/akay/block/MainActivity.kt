@@ -27,6 +27,7 @@ class MainActivity : ComponentActivity(), GameView.Listener {
     private val MATCH = ViewGroup.LayoutParams.MATCH_PARENT
     private val WRAP = ViewGroup.LayoutParams.WRAP_CONTENT
     private var screen = "home"
+    private var game: GameView? = null
 
     private fun lp(w: Int, h: Int, wt: Float = 0f): LinearLayout.LayoutParams =
         LinearLayout.LayoutParams(w, h, wt)
@@ -79,6 +80,19 @@ class MainActivity : ComponentActivity(), GameView.Listener {
         showHome()
     }
 
+    override fun onPause() {
+        saveIfPlaying()
+        super.onPause()
+    }
+
+    // keeps the running Classic game so it can be continued later
+    private fun saveIfPlaying() {
+        if (screen != "classic") return
+        val g = game ?: return
+        val s = g.snapshot()
+        if (s != null) Store.saveGame(s) else Store.clearGame()
+    }
+
     // big chunky button with a darker bottom edge
     private fun chunky(text: String, face: Int, edge: Int, icon: View?, onClick: () -> Unit): View {
         val box = LinearLayout(this)
@@ -120,6 +134,8 @@ class MainActivity : ComponentActivity(), GameView.Listener {
     // ---------- home ----------
 
     private fun showHome() {
+        saveIfPlaying()
+        game = null
         screen = "home"
         val root = LinearLayout(this)
         root.orientation = LinearLayout.VERTICAL
@@ -138,13 +154,20 @@ class MainActivity : ComponentActivity(), GameView.Listener {
         val classic = chunky(
             "Classic", 0xFF22C99A.toInt(), 0xFF139A75.toInt(),
             IconView(this, 1, 0xFF22C99A.toInt())
-        ) { showClassic() }
+        ) { showClassic(true) }
         val cl = lp(MATCH, dp(84))
         cl.topMargin = dp(18)
         root.addView(classic, cl)
 
+        val best = Store.classicBest()
+        val info = if (Store.loadGame() != null) "Best: $best   \u2022   Game saved, tap Classic to continue"
+        else "Best: $best"
+        val infoView = label(info, 14f, 0xCCFFFFFF.toInt())
+        infoView.setPadding(0, dp(18), 0, 0)
+        root.addView(infoView, lp(MATCH, WRAP))
+
         root.addView(View(this), lp(MATCH, 0, 0.7f))
-        root.addView(label("v1.0  \u2022  Stage 1", 12f, 0x99FFFFFF.toInt()), lp(WRAP, WRAP))
+        root.addView(label("v1.0  \u2022  Stage 2", 12f, 0x99FFFFFF.toInt()), lp(WRAP, WRAP))
 
         val bg = GradientDrawable(
             GradientDrawable.Orientation.TOP_BOTTOM,
@@ -155,16 +178,27 @@ class MainActivity : ComponentActivity(), GameView.Listener {
 
     // ---------- classic mode ----------
 
-    private fun showClassic() {
-        screen = "classic"
+    private fun showClassic(resume: Boolean) {
         val g = GameView(this)
         g.best = Store.classicBest()
         g.listener = this
-        g.newGame()
+        var loaded = false
+        if (resume) {
+            val s = Store.loadGame()
+            if (s != null) loaded = g.loadState(s)
+        }
+        if (!loaded) {
+            Store.clearGame()
+            g.newGame()
+        }
+        game = g
+        screen = "classic"
         setScreen(g, ColorDrawable(0xFF3B4F8F.toInt()), Color.TRANSPARENT, Color.TRANSPARENT, false)
     }
 
     override fun onGameOver(score: Int) {
+        Store.clearGame()
+        game = null
         val old = Store.classicBest()
         val newBest = score > old
         if (newBest) Store.setClassicBest(score)
@@ -199,7 +233,7 @@ class MainActivity : ComponentActivity(), GameView.Listener {
         val play = chunky(
             "Play Again", 0xFFF5A31A.toInt(), 0xFFC77D00.toInt(),
             IconView(this, 2, 0xFFF5A31A.toInt())
-        ) { showClassic() }
+        ) { showClassic(false) }
         val pl = lp(MATCH, dp(84))
         pl.topMargin = dp(40)
         root.addView(play, pl)
@@ -241,7 +275,7 @@ class MainActivity : ComponentActivity(), GameView.Listener {
         panel.addView(b1, lp(MATCH, dp(66)))
         val b2 = chunky("Replay", green, greenEdge, null) {
             dlg.dismiss()
-            showClassic()
+            showClassic(false)
         }
         val l2 = lp(MATCH, dp(66))
         l2.topMargin = dp(12)
