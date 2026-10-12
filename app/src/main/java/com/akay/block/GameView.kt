@@ -10,10 +10,14 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
+import android.view.animation.OvershootInterpolator
 import java.util.Random
+import kotlin.math.PI
 import kotlin.math.hypot
+import kotlin.math.sin
 
 class GameView(ctx: Context) : View(ctx) {
 
@@ -34,11 +38,13 @@ class GameView(ctx: Context) : View(ctx) {
     )
 
     private val board = Array(N) { IntArray(N) }
+    private val justPlaced = Array(N) { BooleanArray(N) }
     private val tray = arrayOfNulls<Piece>(3)
     private val rnd = Random()
     private var score = 0
     private var shownScore = 0f
     private var combo = 0
+    private var streak = 0
     private var over = false
 
     // geometry
@@ -60,17 +66,41 @@ class GameView(ctx: Context) : View(ctx) {
     private val prevRows = ArrayList<Int>()
     private val prevCols = ArrayList<Int>()
 
+    // piece flying back to the tray
+    private var retIdx = -1
+    private var retT = 1f
+    private var retFromL = 0f
+    private var retFromT = 0f
+    private var retFromS = 0f
+
     // effects
     private class Fade(val r: Int, val c: Int, val color: Int)
+    private class Spark(
+        var x: Float, var y: Float, var vx: Float, var vy: Float,
+        var life: Float, val color: Int, val size: Float
+    )
 
     private val fades = ArrayList<Fade>()
+    private val sparks = ArrayList<Spark>()
     private var fadeT = 1f
     private var popT = 1f
+    private var placeT = 1f
+    private var spawnT = 1f
+    private var liftT = 1f
+    private var shakeT = 1f
     private var popText = ""
     private var popPhrase = ""
+    private var lastNano = 0L
+    private val ovs = OvershootInterpolator(1.6f)
+
     private var fadeAnim: ValueAnimator? = null
     private var popAnim: ValueAnimator? = null
     private var scoreAnim: ValueAnimator? = null
+    private var placeAnim: ValueAnimator? = null
+    private var spawnAnim: ValueAnimator? = null
+    private var liftAnim: ValueAnimator? = null
+    private var retAnim: ValueAnimator? = null
+    private var shakeAnim: ValueAnimator? = null
     private var overRun: Runnable? = null
 
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -83,25 +113,121 @@ class GameView(ctx: Context) : View(ctx) {
         tp.textAlign = Paint.Align.CENTER
     }
 
-    // ---------- game logic ----------
+    private fun anim(ms: Long, update: (Float) -> Unit, end: (() -> Unit)? = null): ValueAnimator {
+        val a = ValueAnimator.ofFloat(0f, 1f)
+        a.duration = ms
+        a.addUpdateListener {
+            update(it.animatedValue as Float)
+            invalidate()
+        }
+        if (end != null) {
+            a.addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: Animator) {
+                    end()
+                }
+            })
+        }
+        a.start()
+        return a
+    }
 
-    fun newGame() {
+    // ---------- game state ----------
+
+    private fun cancelAnims() {
         fadeAnim?.cancel()
         popAnim?.cancel()
         scoreAnim?.cancel()
+        placeAnim?.cancel()
+        spawnAnim?.cancel()
+        liftAnim?.cancel()
+        retAnim?.cancel()
+        shakeAnim?.cancel()
+    }
+
+    private fun resetState() {
+        cancelAnims()
         removeCallbacks(overRun)
-        for (r in 0 until N) java.util.Arrays.fill(board[r], 0)
+        for (r in 0 until N) {
+            java.util.Arrays.fill(board[r], 0)
+            java.util.Arrays.fill(justPlaced[r], false)
+        }
         score = 0
         shownScore = 0f
         combo = 0
+        streak = 0
         over = false
         fades.clear()
+        sparks.clear()
         popT = 1f
+        placeT = 1f
+        spawnT = 1f
+        liftT = 1f
+        shakeT = 1f
+        retIdx = -1
+        retT = 1f
         dragIdx = -1
         prevRows.clear()
         prevCols.clear()
+        for (i in 0..2) tray[i] = null
+    }
+
+    fun newGame() {
+        resetState()
         refill()
         invalidate()
+    }
+
+    // text form of the running game, so it can be saved. null when the game is over.
+    fun snapshot(): String? {
+        if (over) return null
+        val sb = StringBuilder()
+        sb.append("v1|").append(score).append('|').append(combo).append('|').append(streak).append('|')
+        for (r in 0 until N) for (c in 0 until N) sb.append(board[r][c])
+        for (i in 0..2) {
+            sb.append('|')
+            val pc = tray[i]
+            if (pc == null) sb.append('-') else sb.append(Shapes.all.indexOf(pc.rows)).append(':').append(pc.color)
+        }
+        return sb.toString()
+    }
+
+    fun loadState(s: String): Boolean {
+        return try {
+            val parts = s.split("|")
+            if (parts.size != 8 || parts[0] != "v1" || parts[4].length != N * N) return false
+            val sc = parts[1].toInt()
+            val cb = parts[2].toInt()
+            val st = parts[3].toInt()
+            val bd = parts[4]
+            for (ch in bd) {
+                if (ch < '0' || ch > '7') return false
+            }
+            val pcs = arrayOfNulls<Piece>(3)
+            for (i in 0..2) {
+                val t = parts[5 + i]
+                if (t != "-") {
+                    val kv = t.split(":")
+                    val idx = kv[0].toInt()
+                    val col = kv[1].toInt()
+                    if (idx < 0 || idx >= Shapes.all.size || col < 1 || col > 7) return false
+                    pcs[i] = Piece(Shapes.all[idx], col)
+                }
+            }
+            resetState()
+            score = sc
+            shownScore = sc.toFloat()
+            combo = cb
+            streak = st
+            for (r in 0 until N) for (c in 0 until N) board[r][c] = bd[r * N + c] - '0'
+            for (i in 0..2) tray[i] = pcs[i]
+            if (tray.all { it == null }) refill()
+            if (score > best) best = score
+            checkOver()
+            invalidate()
+            true
+        } catch (e: Throwable) {
+            false
+        }
     }
 
     private fun refill() {
@@ -111,6 +237,9 @@ class GameView(ctx: Context) : View(ctx) {
             tries++
             if (tries > 30 || tray.any { it != null && fitsAnywhere(it) }) break
         }
+        spawnAnim?.cancel()
+        spawnT = 0f
+        spawnAnim = anim(280, { spawnT = it })
     }
 
     private fun canPlace(pc: Piece, r0: Int, c0: Int): Boolean {
@@ -138,7 +267,12 @@ class GameView(ctx: Context) : View(ctx) {
         (0 until N).filter { c -> (0 until N).all { r -> b[r][c] != 0 } }
 
     private fun place(idx: Int, pc: Piece, r0: Int, c0: Int) {
-        for (cl in pc.cells) board[r0 + cl[0]][c0 + cl[1]] = pc.color
+        placeAnim?.cancel()
+        fadeAnim?.cancel()
+        for (cl in pc.cells) {
+            board[r0 + cl[0]][c0 + cl[1]] = pc.color
+            justPlaced[r0 + cl[0]][c0 + cl[1]] = true
+        }
         tray[idx] = null
         val rows = fullRows(board)
         val cols = fullCols(board)
@@ -146,22 +280,73 @@ class GameView(ctx: Context) : View(ctx) {
         var gain = pc.cells.size
         if (lines > 0) {
             combo++
-            fadeAnim?.cancel()
+            streak = 0
             val set = HashSet<Int>()
             for (r in rows) for (c in 0 until N) set.add(r * N + c)
             for (c in cols) for (r in 0 until N) set.add(r * N + c)
             fades.clear()
-            for (k in set) fades.add(Fade(k / N, k % N, board[k / N][k % N]))
-            for (k in set) board[k / N][k % N] = 0
+            for (k in set) {
+                val rr = k / N
+                val cc = k % N
+                fades.add(Fade(rr, cc, board[rr][cc]))
+                spawnSparks(rr, cc, board[rr][cc])
+            }
+            for (k in set) {
+                board[k / N][k % N] = 0
+                justPlaced[k / N][k % N] = false
+            }
             gain += lines * lines * 10 + (combo - 1) * 10 * lines
+            val perfect = board.all { row -> row.all { it == 0 } }
+            if (perfect) gain += 300
             startFade()
-            showPop(gain, lines)
+            showPop(gain, lines, perfect)
+            if (lines >= 3 || combo >= 3 || perfect) shake()
+            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
         } else {
-            combo = 0
+            streak++
+            if (streak >= 3) combo = 0
+            performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
         }
+        placeT = 0f
+        placeAnim = anim(220, { placeT = it }, { clearPlaced() })
         addScore(gain)
         if (tray.all { it == null }) refill()
         checkOver()
+    }
+
+    private fun clearPlaced() {
+        for (r in 0 until N) java.util.Arrays.fill(justPlaced[r], false)
+    }
+
+    private fun spawnSparks(r: Int, cc: Int, color: Int) {
+        val cx = bl + cc * cell + cell / 2f
+        val cy = bt + r * cell + cell / 2f
+        for (k in 0 until 3) {
+            if (sparks.size > 260) return
+            val ang = (rnd.nextFloat() * 6.2832f).toDouble()
+            val sp = (80f + rnd.nextFloat() * 220f) * den
+            sparks.add(
+                Spark(
+                    cx, cy,
+                    Math.cos(ang).toFloat() * sp,
+                    Math.sin(ang).toFloat() * sp - 120f * den,
+                    1f, color, (3f + rnd.nextFloat() * 4f) * den
+                )
+            )
+        }
+    }
+
+    private fun updateSparks(dt: Float) {
+        var i = sparks.size - 1
+        while (i >= 0) {
+            val s = sparks[i]
+            s.x += s.vx * dt
+            s.y += s.vy * dt
+            s.vy += 1500f * den * dt
+            s.life -= dt / 0.75f
+            if (s.life <= 0f) sparks.removeAt(i)
+            i--
+        }
     }
 
     private fun checkOver() {
@@ -178,7 +363,9 @@ class GameView(ctx: Context) : View(ctx) {
         score += g
         if (score > best) best = score
         scoreAnim?.cancel()
-        val a = ValueAnimator.ofFloat(shownScore, score.toFloat())
+        val from = shownScore
+        val to = score.toFloat()
+        val a = ValueAnimator.ofFloat(from, to)
         a.duration = 450
         a.addUpdateListener {
             shownScore = it.animatedValue as Float
@@ -190,25 +377,19 @@ class GameView(ctx: Context) : View(ctx) {
 
     private fun startFade() {
         fadeT = 0f
-        val a = ValueAnimator.ofFloat(0f, 1f)
-        a.duration = 320
-        a.addUpdateListener {
-            fadeT = it.animatedValue as Float
-            invalidate()
-        }
-        a.addListener(object : AnimatorListenerAdapter() {
-            override fun onAnimationEnd(animation: Animator) {
-                fades.clear()
-                invalidate()
-            }
-        })
-        a.start()
-        fadeAnim = a
+        fadeAnim = anim(320, { fadeT = it }, { fades.clear() })
     }
 
-    private fun showPop(gain: Int, lines: Int) {
+    private fun shake() {
+        shakeAnim?.cancel()
+        shakeT = 0f
+        shakeAnim = anim(380, { shakeT = it })
+    }
+
+    private fun showPop(gain: Int, lines: Int, perfect: Boolean) {
         popText = "+$gain"
         popPhrase = when {
+            perfect -> "Perfect!"
             lines >= 4 || combo >= 4 -> "Amazing!"
             lines == 3 || combo == 3 -> "Excellent!"
             lines == 2 || combo == 2 -> "Great!"
@@ -216,14 +397,7 @@ class GameView(ctx: Context) : View(ctx) {
         }
         popAnim?.cancel()
         popT = 0f
-        val a = ValueAnimator.ofFloat(0f, 1f)
-        a.duration = 950
-        a.addUpdateListener {
-            popT = it.animatedValue as Float
-            invalidate()
-        }
-        a.start()
-        popAnim = a
+        popAnim = anim(950, { popT = it })
     }
 
     // ---------- size and touch ----------
@@ -268,6 +442,17 @@ class GameView(ctx: Context) : View(ctx) {
     private fun gearHit(x: Float, y: Float): Boolean =
         hypot(x - (width - 38f * den), y - 40f * den) < 30f * den
 
+    private fun dropBack(idx: Int, pc: Piece) {
+        retAnim?.cancel()
+        val ds = trayCell + (cell - trayCell) * liftT
+        retFromL = fx - pc.w * ds / 2f
+        retFromT = fy - pc.h * ds / 2f - cell * 1.8f * liftT
+        retFromS = ds
+        retIdx = idx
+        retT = 0f
+        retAnim = anim(200, { retT = it }, { retIdx = -1 })
+    }
+
     override fun onTouchEvent(e: MotionEvent): Boolean {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -279,9 +464,13 @@ class GameView(ctx: Context) : View(ctx) {
                 if (over) return true
                 val i = slotAt(e.x, e.y)
                 if (i >= 0 && tray[i] != null) {
+                    retAnim?.cancel()
                     dragIdx = i
                     fx = e.x
                     fy = e.y
+                    liftAnim?.cancel()
+                    liftT = 0f
+                    liftAnim = anim(130, { liftT = it })
                     updateSnap()
                     invalidate()
                 }
@@ -304,7 +493,9 @@ class GameView(ctx: Context) : View(ctx) {
                     val idx = dragIdx
                     val pc = tray[idx]
                     dragIdx = -1
-                    if (pc != null && snapOk) place(idx, pc, snapR, snapC)
+                    if (pc != null) {
+                        if (snapOk) place(idx, pc, snapR, snapC) else dropBack(idx, pc)
+                    }
                     prevRows.clear()
                     prevCols.clear()
                     invalidate()
@@ -322,9 +513,7 @@ class GameView(ctx: Context) : View(ctx) {
     }
 
     override fun onDetachedFromWindow() {
-        fadeAnim?.cancel()
-        popAnim?.cancel()
-        scoreAnim?.cancel()
+        cancelAnims()
         removeCallbacks(overRun)
         super.onDetachedFromWindow()
     }
@@ -332,13 +521,29 @@ class GameView(ctx: Context) : View(ctx) {
     // ---------- drawing ----------
 
     override fun onDraw(c: Canvas) {
+        val now = System.nanoTime()
+        val dt = if (lastNano == 0L) 0f else minOf(0.05f, (now - lastNano) / 1e9f)
+        lastNano = now
+        updateSparks(dt)
+
         val w = width.toFloat()
         drawHud(c, w)
+        drawCombo(c, w)
+
+        val sx = if (shakeT < 1f) sin(shakeT * PI.toFloat() * 7f) * (1f - shakeT) * 7f * den else 0f
+        c.save()
+        c.translate(sx, 0f)
         drawBoard(c)
         drawFades(c)
+        drawSparks(c)
+        c.restore()
+
         drawTray(c)
+        drawRet(c)
         drawDrag(c)
         drawPop(c, w)
+
+        if (sparks.isNotEmpty()) postInvalidateOnAnimation() else lastNano = 0L
     }
 
     private fun drawOutlined(
@@ -399,6 +604,22 @@ class GameView(ctx: Context) : View(ctx) {
         c.drawText(shownScore.toInt().toString(), w / 2f, sy + 20f * den, tp)
     }
 
+    private fun drawCombo(c: Canvas, w: Float) {
+        if (combo < 2) return
+        val txt = "COMBO x$combo"
+        tp.style = Paint.Style.FILL
+        tp.textAlign = Paint.Align.CENTER
+        tp.textSize = 14f * den
+        val tw = tp.measureText(txt)
+        val cy = bt - 22f * den
+        rf.set(w / 2f - tw / 2f - 14f * den, cy - 13f * den, w / 2f + tw / 2f + 14f * den, cy + 13f * den)
+        p.style = Paint.Style.FILL
+        p.color = 0xFFFF7A18.toInt()
+        c.drawRoundRect(rf, 13f * den, 13f * den, p)
+        tp.color = Color.WHITE
+        c.drawText(txt, w / 2f, cy + 5f * den, tp)
+    }
+
     private fun drawBoard(c: Canvas) {
         p.style = Paint.Style.FILL
         rf.set(bl - 8f * den, bt - 8f * den, bl + cell * N + 8f * den, bt + cell * N + 8f * den)
@@ -419,7 +640,14 @@ class GameView(ctx: Context) : View(ctx) {
         for (r in 0 until N) {
             for (cc in 0 until N) {
                 val v = board[r][cc]
-                if (v != 0) drawBlock(c, bl + cc * cell, bt + r * cell, cell, v, 255)
+                if (v == 0) continue
+                if (placeT < 1f && justPlaced[r][cc]) {
+                    val k = 1f + 0.16f * sin(placeT * PI.toFloat())
+                    val s = cell * k
+                    drawBlock(c, bl + cc * cell - (s - cell) / 2f, bt + r * cell - (s - cell) / 2f, s, v, 255)
+                } else {
+                    drawBlock(c, bl + cc * cell, bt + r * cell, cell, v, 255)
+                }
             }
         }
 
@@ -459,25 +687,53 @@ class GameView(ctx: Context) : View(ctx) {
         }
     }
 
+    private fun drawSparks(c: Canvas) {
+        if (sparks.isEmpty()) return
+        p.style = Paint.Style.FILL
+        for (s in sparks) {
+            p.color = withAlpha(mixColor(COLORS[s.color], Color.WHITE, 0.3f), (s.life * 255f).toInt())
+            rf.set(s.x - s.size / 2f, s.y - s.size / 2f, s.x + s.size / 2f, s.y + s.size / 2f)
+            c.drawRect(rf, p)
+        }
+    }
+
     private fun drawTray(c: Canvas) {
+        val k = if (spawnT < 1f) 0.45f + 0.55f * ovs.getInterpolation(spawnT) else 1f
+        val ts = trayCell * k
         for (i in 0..2) {
-            if (i == dragIdx) continue
+            if (i == dragIdx || i == retIdx) continue
             val pc = tray[i] ?: continue
-            val left = slotX[i] - pc.w * trayCell / 2f
-            val top = slotY - pc.h * trayCell / 2f
+            val left = slotX[i] - pc.w * ts / 2f
+            val top = slotY - pc.h * ts / 2f
             for (cl in pc.cells) {
-                drawBlock(c, left + cl[1] * trayCell, top + cl[0] * trayCell, trayCell, pc.color, 255)
+                drawBlock(c, left + cl[1] * ts, top + cl[0] * ts, ts, pc.color, 255)
             }
+        }
+    }
+
+    private fun drawRet(c: Canvas) {
+        if (retIdx < 0) return
+        val pc = tray[retIdx] ?: return
+        val t = retT
+        val e = 1f - (1f - t) * (1f - t)
+        val s = retFromS + (trayCell - retFromS) * e
+        val toL = slotX[retIdx] - pc.w * trayCell / 2f
+        val toT = slotY - pc.h * trayCell / 2f
+        val left = retFromL + (toL - retFromL) * e
+        val top = retFromT + (toT - retFromT) * e
+        for (cl in pc.cells) {
+            drawBlock(c, left + cl[1] * s, top + cl[0] * s, s, pc.color, 255)
         }
     }
 
     private fun drawDrag(c: Canvas) {
         if (dragIdx < 0) return
         val pc = tray[dragIdx] ?: return
-        val left = fx - pc.w * cell / 2f
-        val top = fy - pc.h * cell / 2f - cell * 1.8f
+        val ds = trayCell + (cell - trayCell) * liftT
+        val left = fx - pc.w * ds / 2f
+        val top = fy - pc.h * ds / 2f - cell * 1.8f * liftT
         for (cl in pc.cells) {
-            drawBlock(c, left + cl[1] * cell, top + cl[0] * cell, cell, pc.color, 255)
+            drawBlock(c, left + cl[1] * ds, top + cl[0] * ds, ds, pc.color, 255)
         }
     }
 
