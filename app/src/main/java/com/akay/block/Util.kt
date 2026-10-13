@@ -47,6 +47,23 @@ object Store {
         sp!!.edit().remove("classic_save").apply()
     }
 
+    // Adventure: the level the player is on, and the running state of that level
+    fun advLevel(): Int = sp!!.getInt("adv_level", 1)
+
+    fun setAdvLevel(v: Int) {
+        sp!!.edit().putInt("adv_level", v).apply()
+    }
+
+    fun saveAdv(s: String) {
+        sp!!.edit().putString("adv_save", s).apply()
+    }
+
+    fun loadAdv(): String? = sp!!.getString("adv_save", null)
+
+    fun clearAdv() {
+        sp!!.edit().remove("adv_save").apply()
+    }
+
     // sound settings
     fun soundOn(): Boolean = sp!!.getBoolean("sound_on", true)
 
