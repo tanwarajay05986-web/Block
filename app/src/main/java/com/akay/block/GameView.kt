@@ -302,10 +302,12 @@ class GameView(ctx: Context) : View(ctx) {
             showPop(gain, lines, perfect)
             if (lines >= 3 || combo >= 3 || perfect) shake()
             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            Sfx.clear(combo, lines, perfect)
         } else {
             streak++
             if (streak >= 3) combo = 0
             performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            Sfx.place()
         }
         placeT = 0f
         placeAnim = anim(220, { placeT = it }, { clearPlaced() })
@@ -451,6 +453,7 @@ class GameView(ctx: Context) : View(ctx) {
         retIdx = idx
         retT = 0f
         retAnim = anim(200, { retT = it }, { retIdx = -1 })
+        Sfx.back()
     }
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
@@ -473,6 +476,7 @@ class GameView(ctx: Context) : View(ctx) {
                     liftAnim = anim(130, { liftT = it })
                     updateSnap()
                     invalidate()
+                    Sfx.tap()
                 }
             }
             MotionEvent.ACTION_MOVE -> {
@@ -486,7 +490,10 @@ class GameView(ctx: Context) : View(ctx) {
             MotionEvent.ACTION_UP -> {
                 if (gearDown) {
                     gearDown = false
-                    if (gearHit(e.x, e.y)) listener?.onSettings()
+                    if (gearHit(e.x, e.y)) {
+                        Sfx.tap()
+                        listener?.onSettings()
+                    }
                     return true
                 }
                 if (dragIdx >= 0) {
