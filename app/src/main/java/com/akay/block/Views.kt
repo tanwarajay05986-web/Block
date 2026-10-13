@@ -122,3 +122,62 @@ class CrownView(ctx: Context) : View(ctx) {
         drawCrown(c, width / 2f, height / 2f, width.toFloat(), p)
     }
 }
+
+// settings icons: kind 0 = speaker (sound), kind 1 = music note. A red slash is drawn when off.
+class ToggleIcon(ctx: Context, private val kind: Int) : View(ctx) {
+    var off = false
+        set(v) {
+            field = v
+            invalidate()
+        }
+
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val rf = RectF()
+    private val path = Path()
+
+    override fun onDraw(c: Canvas) {
+        val s = minOf(width, height).toFloat()
+        val ox = (width - s) / 2f
+        val oy = (height - s) / 2f
+        p.color = Color.WHITE
+        p.style = Paint.Style.FILL
+        if (kind == 0) {
+            rf.set(ox + 0.1f * s, oy + 0.38f * s, ox + 0.28f * s, oy + 0.62f * s)
+            c.drawRoundRect(rf, 0.03f * s, 0.03f * s, p)
+            path.reset()
+            path.moveTo(ox + 0.28f * s, oy + 0.38f * s)
+            path.lineTo(ox + 0.52f * s, oy + 0.18f * s)
+            path.lineTo(ox + 0.52f * s, oy + 0.82f * s)
+            path.lineTo(ox + 0.28f * s, oy + 0.62f * s)
+            path.close()
+            c.drawPath(path, p)
+            if (!off) {
+                p.style = Paint.Style.STROKE
+                p.strokeWidth = 0.07f * s
+                p.strokeCap = Paint.Cap.ROUND
+                rf.set(ox + 0.33f * s, oy + 0.33f * s, ox + 0.67f * s, oy + 0.67f * s)
+                c.drawArc(rf, -50f, 100f, false, p)
+                rf.set(ox + 0.2f * s, oy + 0.2f * s, ox + 0.8f * s, oy + 0.8f * s)
+                c.drawArc(rf, -50f, 100f, false, p)
+            }
+        } else {
+            c.drawCircle(ox + 0.36f * s, oy + 0.74f * s, 0.14f * s, p)
+            rf.set(ox + 0.44f * s, oy + 0.2f * s, ox + 0.52f * s, oy + 0.74f * s)
+            c.drawRect(rf, p)
+            path.reset()
+            path.moveTo(ox + 0.52f * s, oy + 0.2f * s)
+            path.lineTo(ox + 0.8f * s, oy + 0.3f * s)
+            path.lineTo(ox + 0.8f * s, oy + 0.45f * s)
+            path.lineTo(ox + 0.52f * s, oy + 0.35f * s)
+            path.close()
+            c.drawPath(path, p)
+        }
+        if (off) {
+            p.style = Paint.Style.STROKE
+            p.strokeCap = Paint.Cap.ROUND
+            p.strokeWidth = 0.09f * s
+            p.color = 0xFFFF3B30.toInt()
+            c.drawLine(ox + 0.15f * s, oy + 0.85f * s, ox + 0.85f * s, oy + 0.15f * s, p)
+        }
+    }
+}
