@@ -46,6 +46,19 @@ object Store {
     fun clearGame() {
         sp!!.edit().remove("classic_save").apply()
     }
+
+    // sound settings
+    fun soundOn(): Boolean = sp!!.getBoolean("sound_on", true)
+
+    fun setSoundOn(v: Boolean) {
+        sp!!.edit().putBoolean("sound_on", v).apply()
+    }
+
+    fun musicOn(): Boolean = sp!!.getBoolean("music_on", true)
+
+    fun setMusicOn(v: Boolean) {
+        sp!!.edit().putBoolean("music_on", v).apply()
+    }
 }
 
 // simple crown drawn with the colour already set on the paint
