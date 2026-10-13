@@ -27,7 +27,13 @@ object Store {
     private var sp: SharedPreferences? = null
 
     fun init(c: Context) {
-        if (sp == null) sp = c.applicationContext.getSharedPreferences("block", Context.MODE_PRIVATE)
+        if (sp == null) {
+            sp = c.applicationContext.getSharedPreferences("block", Context.MODE_PRIVATE)
+            // older versions kept only the current level: that level counts as unlocked
+            if (!sp!!.contains("adv_max")) {
+                sp!!.edit().putInt("adv_max", sp!!.getInt("adv_level", 1)).apply()
+            }
+        }
     }
 
     fun classicBest(): Int = sp!!.getInt("classic_best", 0)
@@ -47,8 +53,15 @@ object Store {
         sp!!.edit().remove("classic_save").apply()
     }
 
-    // Adventure: the level the player is on, and the running state of that level
-    fun advLevel(): Int = sp!!.getInt("adv_level", 1)
+    // Adventure: highest unlocked level (a level unlocks only when the one before it is cleared)
+    fun advMax(): Int = sp!!.getInt("adv_max", 1).coerceIn(1, Levels.COUNT)
+
+    fun setAdvMax(v: Int) {
+        sp!!.edit().putInt("adv_max", v.coerceIn(1, Levels.COUNT)).apply()
+    }
+
+    // Adventure: the level that is selected on the map (never above the unlocked level)
+    fun advLevel(): Int = minOf(sp!!.getInt("adv_level", 1), advMax()).coerceAtLeast(1)
 
     fun setAdvLevel(v: Int) {
         sp!!.edit().putInt("adv_level", v).apply()
