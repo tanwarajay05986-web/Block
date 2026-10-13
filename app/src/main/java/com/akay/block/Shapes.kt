@@ -39,5 +39,22 @@ object Shapes {
         listOf("X..", "XXX"), listOf("..X", "XXX"), listOf("XXX", "X.."), listOf("XXX", "..X")
     )
 
+    fun count(rows: List<String>): Int {
+        var n = 0
+        for (r in rows) for (ch in r) if (ch == 'X') n++
+        return n
+    }
+
     fun random(rnd: Random): Piece = Piece(all[rnd.nextInt(all.size)], 1 + rnd.nextInt(7))
+
+    // a random piece with at most maxCells blocks (used for easier early levels)
+    fun randomMax(rnd: Random, maxCells: Int): Piece {
+        var shape = all[rnd.nextInt(all.size)]
+        var tries = 0
+        while (count(shape) > maxCells && tries < 30) {
+            shape = all[rnd.nextInt(all.size)]
+            tries++
+        }
+        return Piece(shape, 1 + rnd.nextInt(7))
+    }
 }
