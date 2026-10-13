@@ -65,6 +65,7 @@ class MainActivity : ComponentActivity(), GameView.Listener {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Store.init(this)
+        Sfx.init(this)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         try {
             window.statusBarColor = Color.TRANSPARENT
@@ -80,8 +81,14 @@ class MainActivity : ComponentActivity(), GameView.Listener {
         showHome()
     }
 
+    override fun onResume() {
+        super.onResume()
+        Sfx.resumeMusic()
+    }
+
     override fun onPause() {
         saveIfPlaying()
+        Sfx.pauseMusic()
         super.onPause()
     }
 
@@ -117,7 +124,10 @@ class MainActivity : ComponentActivity(), GameView.Listener {
         t.setTypeface(Typeface.DEFAULT_BOLD, Typeface.BOLD_ITALIC)
         t.setPadding(if (icon != null) dp(14) else 0, 0, 0, 0)
         box.addView(t)
-        box.setOnClickListener { onClick() }
+        box.setOnClickListener {
+            Sfx.tap()
+            onClick()
+        }
         return box
     }
 
@@ -167,7 +177,7 @@ class MainActivity : ComponentActivity(), GameView.Listener {
         root.addView(infoView, lp(MATCH, WRAP))
 
         root.addView(View(this), lp(MATCH, 0, 0.7f))
-        root.addView(label("v1.0  \u2022  Stage 2", 12f, 0x99FFFFFF.toInt()), lp(WRAP, WRAP))
+        root.addView(label("v1.0  \u2022  Stage 3", 12f, 0x99FFFFFF.toInt()), lp(WRAP, WRAP))
 
         val bg = GradientDrawable(
             GradientDrawable.Orientation.TOP_BOTTOM,
@@ -202,6 +212,7 @@ class MainActivity : ComponentActivity(), GameView.Listener {
         val old = Store.classicBest()
         val newBest = score > old
         if (newBest) Store.setClassicBest(score)
+        if (newBest) Sfx.best() else Sfx.over()
         showGameOver(score, newBest, maxOf(score, old))
     }
 
@@ -240,7 +251,10 @@ class MainActivity : ComponentActivity(), GameView.Listener {
 
         val home = label("Home", 20f, Color.WHITE)
         home.setPadding(0, dp(24), 0, dp(24))
-        home.setOnClickListener { showHome() }
+        home.setOnClickListener {
+            Sfx.tap()
+            showHome()
+        }
         root.addView(home, lp(MATCH, WRAP))
         root.addView(View(this), lp(MATCH, 0, 1.2f))
 
@@ -251,7 +265,27 @@ class MainActivity : ComponentActivity(), GameView.Listener {
         setScreen(root, bg, Color.TRANSPARENT, Color.TRANSPARENT, false)
     }
 
-    // ---------- settings (sound options come in Stage 3) ----------
+    // ---------- settings ----------
+
+    // one sound / music toggle tile
+    private fun tile(kind: Int, text: String, on: Boolean, onToggle: (Boolean) -> Unit): View {
+        val box = LinearLayout(this)
+        box.orientation = LinearLayout.VERTICAL
+        box.gravity = Gravity.CENTER_HORIZONTAL
+        box.setPadding(dp(8), dp(14), dp(8), dp(14))
+        val ic = ToggleIcon(this, kind)
+        ic.off = !on
+        box.addView(ic, lp(dp(54), dp(54)))
+        val t = label(text, 15f, Color.WHITE)
+        t.setPadding(0, dp(6), 0, 0)
+        box.addView(t, lp(WRAP, WRAP))
+        box.setOnClickListener {
+            val nowOn = ic.off
+            ic.off = !nowOn
+            onToggle(nowOn)
+        }
+        return box
+    }
 
     private fun showSettings() {
         val dlg = Dialog(this)
@@ -265,9 +299,24 @@ class MainActivity : ComponentActivity(), GameView.Listener {
         panel.background = pbg
 
         panel.addView(label("Settings", 26f, Color.WHITE), lp(MATCH, WRAP))
-        val note = label("Sound aur music options Stage 3 mein aayenge", 13f, 0xCCFFFFFF.toInt())
-        note.setPadding(0, dp(6), 0, dp(14))
-        panel.addView(note, lp(MATCH, WRAP))
+
+        val tiles = LinearLayout(this)
+        tiles.orientation = LinearLayout.HORIZONTAL
+        val tbg = GradientDrawable()
+        tbg.setColor(0xFF3A44A6.toInt())
+        tbg.cornerRadius = dp(18).toFloat()
+        tiles.background = tbg
+        tiles.addView(tile(0, "Sound", Sfx.soundOn) { on ->
+            Sfx.setSound(on)
+            if (on) Sfx.tap()
+        }, lp(0, WRAP, 1f))
+        tiles.addView(tile(1, "Music", Sfx.musicOn) { on ->
+            Sfx.setMusic(on)
+        }, lp(0, WRAP, 1f))
+        val tl = lp(MATCH, WRAP)
+        tl.topMargin = dp(14)
+        tl.bottomMargin = dp(16)
+        panel.addView(tiles, tl)
 
         val green = 0xFF2DBE12.toInt()
         val greenEdge = 0xFF1A8A07.toInt()
