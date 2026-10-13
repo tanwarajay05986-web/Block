@@ -14,6 +14,7 @@ import android.view.ViewGroup
 import android.view.Window
 import android.view.WindowManager
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
@@ -75,7 +76,11 @@ class MainActivity : ComponentActivity(), GameView.Listener {
         }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (screen == "home") finish() else showHome()
+                when (screen) {
+                    "home" -> finish()
+                    "adv" -> showMap()
+                    else -> showHome()
+                }
             }
         })
         showHome()
@@ -162,7 +167,7 @@ class MainActivity : ComponentActivity(), GameView.Listener {
         val adv = chunky(
             "Adventure", 0xFFF5A31A.toInt(), 0xFFC77D00.toInt(),
             IconView(this, 0, 0xFFF5A31A.toInt())
-        ) { showAdventure(true) }
+        ) { showMap() }
         root.addView(adv, lp(MATCH, dp(84)))
 
         val classic = chunky(
@@ -175,20 +180,94 @@ class MainActivity : ComponentActivity(), GameView.Listener {
 
         val best = Store.classicBest()
         val saved = Store.loadGame() != null || Store.loadAdv() != null
-        val info = "Level ${Store.advLevel()}   \u2022   Best: $best" +
+        val info = "Level ${Store.advMax()}   \u2022   Best: $best" +
             (if (saved) "   \u2022   Game saved" else "")
         val infoView = label(info, 14f, 0xCCFFFFFF.toInt())
         infoView.setPadding(0, dp(18), 0, 0)
         root.addView(infoView, lp(MATCH, WRAP))
 
         root.addView(View(this), lp(MATCH, 0, 0.7f))
-        root.addView(label("v1.0  \u2022  Stage 4", 12f, 0x99FFFFFF.toInt()), lp(WRAP, WRAP))
+        root.addView(label("v1.0  \u2022  Stage 5", 12f, 0x99FFFFFF.toInt()), lp(WRAP, WRAP))
 
         val bg = GradientDrawable(
             GradientDrawable.Orientation.TOP_BOTTOM,
             intArrayOf(0xFF1A3FB0.toInt(), 0xFF1485DE.toInt())
         )
         setScreen(root, bg, Color.TRANSPARENT, Color.TRANSPARENT, false)
+    }
+
+    // ---------- adventure level map ----------
+
+    private fun showMap() {
+        saveIfPlaying()
+        game = null
+        screen = "map"
+        val maxL = Store.advMax()
+        val sel = Store.advLevel()
+
+        val root = LinearLayout(this)
+        root.orientation = LinearLayout.VERTICAL
+
+        val bar = LinearLayout(this)
+        bar.orientation = LinearLayout.HORIZONTAL
+        bar.gravity = Gravity.CENTER_VERTICAL
+        bar.setBackgroundColor(0xFF4F62D0.toInt())
+        bar.setPadding(dp(8), dp(10), dp(8), dp(10))
+        val back = BackView(this)
+        back.setOnClickListener {
+            Sfx.tap()
+            showHome()
+        }
+        bar.addView(back, lp(dp(48), dp(48)))
+        bar.addView(label("Adventure", 26f, Color.WHITE), lp(0, WRAP, 1f))
+        bar.addView(View(this), lp(dp(48), dp(48)))
+        root.addView(bar, lp(MATCH, WRAP))
+
+        val map = MapView(this)
+        map.maxLevel = maxL
+        map.selected = sel
+        map.showChapterOf(sel)
+        val sv = ScrollView(this)
+        sv.isVerticalScrollBarEnabled = false
+        sv.addView(map)
+        root.addView(sv, lp(MATCH, 0, 1f))
+
+        val green = 0xFF2DBE12.toInt()
+        val greenEdge = 0xFF1A8A07.toInt()
+        val play = chunky("Level $sel", green, greenEdge, null) { showAdventure(true) } as LinearLayout
+        val playText = play.getChildAt(play.childCount - 1) as TextView
+        val footer = LinearLayout(this)
+        footer.orientation = LinearLayout.VERTICAL
+        footer.setBackgroundColor(0xFF4F62D0.toInt())
+        footer.setPadding(dp(36), dp(12), dp(36), dp(16))
+        footer.addView(play, lp(MATCH, dp(70)))
+        root.addView(footer, lp(MATCH, WRAP))
+
+        map.listener = object : MapView.Listener {
+            override fun onPick(level: Int) {
+                Sfx.tap()
+                Store.setAdvLevel(level)
+                map.selected = level
+                map.invalidate()
+                playText.text = "Level $level"
+            }
+
+            override fun onLocked(level: Int) {
+                Sfx.back()
+                toast("Level $level locked hai. Pehle Level ${Store.advMax()} clear karo")
+            }
+
+            override fun onChapter() {
+                Sfx.tap()
+                sv.post { sv.fullScroll(View.FOCUS_DOWN) }
+            }
+        }
+        sv.postDelayed({
+            val y = map.yOf(sel)
+            if (y >= 0) sv.scrollTo(0, maxOf(0, y - sv.height / 2))
+        }, 60)
+
+        setScreen(root, ColorDrawable(0xFF3A4A8C.toInt()), 0xFF4F62D0.toInt(), 0xFF4F62D0.toInt(), false)
     }
 
     // ---------- classic mode ----------
@@ -255,18 +334,22 @@ class MainActivity : ComponentActivity(), GameView.Listener {
         showGameOver(score, newBest, maxOf(score, old))
     }
 
+    // clearing a level unlocks the next one
     override fun onLevelComplete(score: Int) {
         val lvNum = Store.advLevel()
         Store.clearAdv()
         game = null
         Sfx.best()
+        val newlyUnlocked = lvNum >= Store.advMax() && lvNum < Levels.COUNT
+        if (newlyUnlocked) Store.setAdvMax(lvNum + 1)
         if (lvNum >= Levels.COUNT) {
             showResult("All ${Levels.COUNT} levels done!", "Score: $score", "Play Again") {
                 showAdventure(false)
             }
         } else {
             Store.setAdvLevel(lvNum + 1)
-            showResult("Level $lvNum complete!", "Score: $score", "Next Level") {
+            val sub = "Score: $score" + (if (newlyUnlocked) "   \u2022   Level ${lvNum + 1} unlocked" else "")
+            showResult("Level $lvNum complete!", sub, "Next Level") {
                 showAdventure(false)
             }
         }
@@ -277,7 +360,7 @@ class MainActivity : ComponentActivity(), GameView.Listener {
     }
 
     override fun onBack() {
-        showHome()
+        showMap()
     }
 
     // simple result box for Adventure (proper win / lose screens come in Stage 6)
@@ -304,6 +387,12 @@ class MainActivity : ComponentActivity(), GameView.Listener {
             dlg.dismiss()
             action()
         }, lp(MATCH, dp(66)))
+        val ml = lp(MATCH, dp(66))
+        ml.topMargin = dp(12)
+        panel.addView(chunky("Levels", green, greenEdge, null) {
+            dlg.dismiss()
+            showMap()
+        }, ml)
         val hl = lp(MATCH, dp(66))
         hl.topMargin = dp(12)
         panel.addView(chunky("Home", green, greenEdge, null) {
