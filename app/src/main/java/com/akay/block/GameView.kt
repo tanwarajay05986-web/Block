@@ -23,7 +23,9 @@ class GameView(ctx: Context) : View(ctx) {
 
     interface Listener {
         fun onGameOver(score: Int)
+        fun onLevelComplete(score: Int)
         fun onSettings()
+        fun onBack()
     }
 
     var listener: Listener? = null
@@ -47,6 +49,9 @@ class GameView(ctx: Context) : View(ctx) {
     private var streak = 0
     private var over = false
 
+    // Adventure level (null in Classic mode)
+    private var level: Level? = null
+
     // geometry
     private var cell = 0f
     private var bl = 0f
@@ -63,6 +68,7 @@ class GameView(ctx: Context) : View(ctx) {
     private var snapC = 0
     private var snapOk = false
     private var gearDown = false
+    private var backDown = false
     private val prevRows = ArrayList<Int>()
     private val prevCols = ArrayList<Int>()
 
@@ -171,8 +177,21 @@ class GameView(ctx: Context) : View(ctx) {
         for (i in 0..2) tray[i] = null
     }
 
+    // Classic mode
     fun newGame() {
+        level = null
         resetState()
+        refill()
+        invalidate()
+    }
+
+    // Adventure mode: start a level with its blocks already on the board
+    fun startLevel(lv: Level) {
+        level = lv
+        resetState()
+        for (r in 0 until N) {
+            for (c in 0 until N) board[r][c] = lv.prefill[r][c]
+        }
         refill()
         invalidate()
     }
@@ -231,9 +250,10 @@ class GameView(ctx: Context) : View(ctx) {
     }
 
     private fun refill() {
+        val mx = level?.maxCells ?: 9
         var tries = 0
         while (true) {
-            for (i in 0..2) tray[i] = Shapes.random(rnd)
+            for (i in 0..2) tray[i] = Shapes.randomMax(rnd, mx)
             tries++
             if (tries > 30 || tray.any { it != null && fitsAnywhere(it) }) break
         }
@@ -312,6 +332,17 @@ class GameView(ctx: Context) : View(ctx) {
         placeT = 0f
         placeAnim = anim(220, { placeT = it }, { clearPlaced() })
         addScore(gain)
+
+        // Adventure: goal reached -> level complete
+        val lv = level
+        if (lv != null && score >= lv.goal) {
+            over = true
+            val run = Runnable { listener?.onLevelComplete(score) }
+            overRun = run
+            postDelayed(run, 900)
+            return
+        }
+
         if (tray.all { it == null }) refill()
         checkOver()
     }
@@ -444,6 +475,9 @@ class GameView(ctx: Context) : View(ctx) {
     private fun gearHit(x: Float, y: Float): Boolean =
         hypot(x - (width - 38f * den), y - 40f * den) < 30f * den
 
+    private fun backHit(x: Float, y: Float): Boolean =
+        level != null && hypot(x - 40f * den, y - 40f * den) < 30f * den
+
     private fun dropBack(idx: Int, pc: Piece) {
         retAnim?.cancel()
         val ds = trayCell + (cell - trayCell) * liftT
@@ -460,8 +494,13 @@ class GameView(ctx: Context) : View(ctx) {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 gearDown = false
+                backDown = false
                 if (gearHit(e.x, e.y)) {
                     gearDown = true
+                    return true
+                }
+                if (backHit(e.x, e.y)) {
+                    backDown = true
                     return true
                 }
                 if (over) return true
@@ -496,6 +535,14 @@ class GameView(ctx: Context) : View(ctx) {
                     }
                     return true
                 }
+                if (backDown) {
+                    backDown = false
+                    if (backHit(e.x, e.y)) {
+                        Sfx.tap()
+                        listener?.onBack()
+                    }
+                    return true
+                }
                 if (dragIdx >= 0) {
                     val idx = dragIdx
                     val pc = tray[idx]
@@ -511,6 +558,7 @@ class GameView(ctx: Context) : View(ctx) {
             MotionEvent.ACTION_CANCEL -> {
                 dragIdx = -1
                 gearDown = false
+                backDown = false
                 prevRows.clear()
                 prevCols.clear()
                 invalidate()
@@ -584,6 +632,11 @@ class GameView(ctx: Context) : View(ctx) {
     }
 
     private fun drawHud(c: Canvas, w: Float) {
+        val lv = level
+        if (lv != null) {
+            drawAdvHud(c, w, lv)
+            return
+        }
         val hy = 40f * den
         p.style = Paint.Style.FILL
         p.color = 0xFFFFC21A.toInt()
@@ -609,6 +662,54 @@ class GameView(ctx: Context) : View(ctx) {
         tp.textSize = 58f * den
         tp.color = Color.WHITE
         c.drawText(shownScore.toInt().toString(), w / 2f, sy + 20f * den, tp)
+    }
+
+    // Adventure HUD: back arrow, gear, level badge, progress bar, goal
+    private fun drawAdvHud(c: Canvas, w: Float, lv: Level) {
+        val hy = 40f * den
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 4.5f * den
+        p.strokeCap = Paint.Cap.ROUND
+        p.strokeJoin = Paint.Join.ROUND
+        p.color = 0xFFBFE0FF.toInt()
+        path.reset()
+        path.moveTo(46f * den, hy - 14f * den)
+        path.lineTo(32f * den, hy)
+        path.lineTo(46f * den, hy + 14f * den)
+        c.drawPath(path, p)
+        p.style = Paint.Style.FILL
+        drawGear(c, w - 38f * den, hy, 17f * den)
+
+        val by = 108f * den
+        val x0 = w * 0.25f
+        val x1 = w * 0.75f
+        val frac = (shownScore / lv.goal).coerceIn(0f, 1f)
+        rf.set(x0, by - 9f * den, x1, by + 9f * den)
+        p.color = 0xFF1D2240.toInt()
+        c.drawRoundRect(rf, 9f * den, 9f * den, p)
+        if (frac > 0.01f) {
+            rf.set(x0, by - 9f * den, x0 + (x1 - x0) * frac, by + 9f * den)
+            p.color = 0xFF3E9BFF.toInt()
+            c.drawRoundRect(rf, 9f * den, 9f * den, p)
+        }
+
+        p.color = 0xFF2E8CF0.toInt()
+        c.drawCircle(x0, by, 26f * den, p)
+        tp.style = Paint.Style.FILL
+        tp.textAlign = Paint.Align.CENTER
+        tp.color = Color.WHITE
+        tp.textSize = (if (lv.number >= 1000) 16f else 22f) * den
+        c.drawText(lv.number.toString(), x0, by + 8f * den, tp)
+
+        p.color = 0xFF14193A.toInt()
+        c.drawCircle(x1, by, 28f * den, p)
+        tp.color = 0xFFFFA600.toInt()
+        tp.textSize = (if (lv.goal >= 1000) 15f else 19f) * den
+        c.drawText(lv.goal.toString(), x1, by + 7f * den, tp)
+
+        tp.color = 0xCCFFFFFF.toInt()
+        tp.textSize = 13f * den
+        c.drawText("${shownScore.toInt()} / ${lv.goal}", w / 2f, by + 44f * den, tp)
     }
 
     private fun drawCombo(c: Canvas, w: Float) {
