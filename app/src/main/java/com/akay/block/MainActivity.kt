@@ -92,12 +92,16 @@ class MainActivity : ComponentActivity(), GameView.Listener {
         super.onPause()
     }
 
-    // keeps the running Classic game so it can be continued later
+    // keeps the running game (Classic or Adventure) so it can be continued later
     private fun saveIfPlaying() {
-        if (screen != "classic") return
         val g = game ?: return
-        val s = g.snapshot()
-        if (s != null) Store.saveGame(s) else Store.clearGame()
+        if (screen == "classic") {
+            val s = g.snapshot()
+            if (s != null) Store.saveGame(s) else Store.clearGame()
+        } else if (screen == "adv") {
+            val s = g.snapshot()
+            if (s != null) Store.saveAdv(Store.advLevel().toString() + "|" + s) else Store.clearAdv()
+        }
     }
 
     // big chunky button with a darker bottom edge
@@ -158,7 +162,7 @@ class MainActivity : ComponentActivity(), GameView.Listener {
         val adv = chunky(
             "Adventure", 0xFFF5A31A.toInt(), 0xFFC77D00.toInt(),
             IconView(this, 0, 0xFFF5A31A.toInt())
-        ) { toast("Adventure mode Stage 4 mein aayega") }
+        ) { showAdventure(true) }
         root.addView(adv, lp(MATCH, dp(84)))
 
         val classic = chunky(
@@ -170,14 +174,15 @@ class MainActivity : ComponentActivity(), GameView.Listener {
         root.addView(classic, cl)
 
         val best = Store.classicBest()
-        val info = if (Store.loadGame() != null) "Best: $best   \u2022   Game saved, tap Classic to continue"
-        else "Best: $best"
+        val saved = Store.loadGame() != null || Store.loadAdv() != null
+        val info = "Level ${Store.advLevel()}   \u2022   Best: $best" +
+            (if (saved) "   \u2022   Game saved" else "")
         val infoView = label(info, 14f, 0xCCFFFFFF.toInt())
         infoView.setPadding(0, dp(18), 0, 0)
         root.addView(infoView, lp(MATCH, WRAP))
 
         root.addView(View(this), lp(MATCH, 0, 0.7f))
-        root.addView(label("v1.0  \u2022  Stage 3", 12f, 0x99FFFFFF.toInt()), lp(WRAP, WRAP))
+        root.addView(label("v1.0  \u2022  Stage 4", 12f, 0x99FFFFFF.toInt()), lp(WRAP, WRAP))
 
         val bg = GradientDrawable(
             GradientDrawable.Orientation.TOP_BOTTOM,
@@ -206,7 +211,41 @@ class MainActivity : ComponentActivity(), GameView.Listener {
         setScreen(g, ColorDrawable(0xFF3B4F8F.toInt()), Color.TRANSPARENT, Color.TRANSPARENT, false)
     }
 
+    // ---------- adventure mode ----------
+
+    private fun showAdventure(resume: Boolean) {
+        val num = Store.advLevel().coerceIn(1, Levels.COUNT)
+        val lv = Levels.make(num)
+        val g = GameView(this)
+        g.listener = this
+        g.startLevel(lv)
+        if (resume) {
+            val s = Store.loadAdv()
+            if (s != null) {
+                val i = s.indexOf('|')
+                if (i > 0 && s.substring(0, i).toIntOrNull() == num) {
+                    if (!g.loadState(s.substring(i + 1))) g.startLevel(lv)
+                }
+            }
+        } else {
+            Store.clearAdv()
+        }
+        game = g
+        screen = "adv"
+        setScreen(g, ColorDrawable(0xFF3B4F8F.toInt()), Color.TRANSPARENT, Color.TRANSPARENT, false)
+    }
+
     override fun onGameOver(score: Int) {
+        if (screen == "adv") {
+            Store.clearAdv()
+            game = null
+            Sfx.over()
+            val lv = Levels.make(Store.advLevel())
+            showResult("No moves left!", "Level ${lv.number}: goal ${lv.goal}, you got $score", "Retry") {
+                showAdventure(false)
+            }
+            return
+        }
         Store.clearGame()
         game = null
         val old = Store.classicBest()
@@ -216,8 +255,69 @@ class MainActivity : ComponentActivity(), GameView.Listener {
         showGameOver(score, newBest, maxOf(score, old))
     }
 
+    override fun onLevelComplete(score: Int) {
+        val lvNum = Store.advLevel()
+        Store.clearAdv()
+        game = null
+        Sfx.best()
+        if (lvNum >= Levels.COUNT) {
+            showResult("All ${Levels.COUNT} levels done!", "Score: $score", "Play Again") {
+                showAdventure(false)
+            }
+        } else {
+            Store.setAdvLevel(lvNum + 1)
+            showResult("Level $lvNum complete!", "Score: $score", "Next Level") {
+                showAdventure(false)
+            }
+        }
+    }
+
     override fun onSettings() {
         showSettings()
+    }
+
+    override fun onBack() {
+        showHome()
+    }
+
+    // simple result box for Adventure (proper win / lose screens come in Stage 6)
+    private fun showResult(title: String, sub: String, primary: String, action: () -> Unit) {
+        val dlg = Dialog(this)
+        dlg.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        dlg.setCancelable(false)
+        val panel = LinearLayout(this)
+        panel.orientation = LinearLayout.VERTICAL
+        panel.setPadding(dp(22), dp(22), dp(22), dp(22))
+        val pbg = GradientDrawable()
+        pbg.setColor(0xFF4F6FD6.toInt())
+        pbg.cornerRadius = dp(26).toFloat()
+        panel.background = pbg
+
+        panel.addView(label(title, 26f, Color.WHITE), lp(MATCH, WRAP))
+        val s = label(sub, 15f, 0xDDFFFFFF.toInt())
+        s.setPadding(0, dp(8), 0, dp(18))
+        panel.addView(s, lp(MATCH, WRAP))
+
+        val green = 0xFF2DBE12.toInt()
+        val greenEdge = 0xFF1A8A07.toInt()
+        panel.addView(chunky(primary, green, greenEdge, null) {
+            dlg.dismiss()
+            action()
+        }, lp(MATCH, dp(66)))
+        val hl = lp(MATCH, dp(66))
+        hl.topMargin = dp(12)
+        panel.addView(chunky("Home", green, greenEdge, null) {
+            dlg.dismiss()
+            showHome()
+        }, hl)
+
+        dlg.setContentView(panel)
+        val w = dlg.window
+        if (w != null) {
+            w.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            w.setLayout((resources.displayMetrics.widthPixels * 0.86f).toInt(), WindowManager.LayoutParams.WRAP_CONTENT)
+        }
+        dlg.show()
     }
 
     private fun showGameOver(score: Int, newBest: Boolean, best: Int) {
@@ -324,7 +424,7 @@ class MainActivity : ComponentActivity(), GameView.Listener {
         panel.addView(b1, lp(MATCH, dp(66)))
         val b2 = chunky("Replay", green, greenEdge, null) {
             dlg.dismiss()
-            showClassic(false)
+            if (screen == "adv") showAdventure(false) else showClassic(false)
         }
         val l2 = lp(MATCH, dp(66))
         l2.topMargin = dp(12)
