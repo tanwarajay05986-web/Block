@@ -13,6 +13,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.Window
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -78,7 +79,7 @@ class MainActivity : ComponentActivity(), GameView.Listener {
             override fun handleOnBackPressed() {
                 when (screen) {
                     "home" -> finish()
-                    "adv" -> showMap()
+                    "adv", "win", "lose" -> showMap()
                     else -> showHome()
                 }
             }
@@ -86,14 +87,8 @@ class MainActivity : ComponentActivity(), GameView.Listener {
         showHome()
     }
 
-    override fun onResume() {
-        super.onResume()
-        Sfx.resumeMusic()
-    }
-
     override fun onPause() {
         saveIfPlaying()
-        Sfx.pauseMusic()
         super.onPause()
     }
 
@@ -150,6 +145,17 @@ class MainActivity : ComponentActivity(), GameView.Listener {
         return t
     }
 
+    // plain text button under the big buttons
+    private fun link(text: String, onClick: () -> Unit): View {
+        val t = label(text, 20f, Color.WHITE)
+        t.setPadding(0, dp(14), 0, dp(14))
+        t.setOnClickListener {
+            Sfx.tap()
+            onClick()
+        }
+        return t
+    }
+
     // ---------- home ----------
 
     private fun showHome() {
@@ -187,7 +193,7 @@ class MainActivity : ComponentActivity(), GameView.Listener {
         root.addView(infoView, lp(MATCH, WRAP))
 
         root.addView(View(this), lp(MATCH, 0, 0.7f))
-        root.addView(label("v1.0  \u2022  Stage 5", 12f, 0x99FFFFFF.toInt()), lp(WRAP, WRAP))
+        root.addView(label("v1.0  \u2022  Stage 6", 12f, 0x99FFFFFF.toInt()), lp(WRAP, WRAP))
 
         val bg = GradientDrawable(
             GradientDrawable.Orientation.TOP_BOTTOM,
@@ -319,10 +325,8 @@ class MainActivity : ComponentActivity(), GameView.Listener {
             Store.clearAdv()
             game = null
             Sfx.over()
-            val lv = Levels.make(Store.advLevel())
-            showResult("No moves left!", "Level ${lv.number}: goal ${lv.goal}, you got $score", "Retry") {
-                showAdventure(false)
-            }
+            val num = Store.advLevel()
+            showLose(num, score, Levels.goal(num))
             return
         }
         Store.clearGame()
@@ -342,17 +346,8 @@ class MainActivity : ComponentActivity(), GameView.Listener {
         Sfx.best()
         val newlyUnlocked = lvNum >= Store.advMax() && lvNum < Levels.COUNT
         if (newlyUnlocked) Store.setAdvMax(lvNum + 1)
-        if (lvNum >= Levels.COUNT) {
-            showResult("All ${Levels.COUNT} levels done!", "Score: $score", "Play Again") {
-                showAdventure(false)
-            }
-        } else {
-            Store.setAdvLevel(lvNum + 1)
-            val sub = "Score: $score" + (if (newlyUnlocked) "   \u2022   Level ${lvNum + 1} unlocked" else "")
-            showResult("Level $lvNum complete!", sub, "Next Level") {
-                showAdventure(false)
-            }
-        }
+        if (lvNum < Levels.COUNT) Store.setAdvLevel(lvNum + 1)
+        showWin(lvNum, score, Levels.goal(lvNum), newlyUnlocked)
     }
 
     override fun onSettings() {
@@ -363,51 +358,102 @@ class MainActivity : ComponentActivity(), GameView.Listener {
         showMap()
     }
 
-    // simple result box for Adventure (proper win / lose screens come in Stage 6)
-    private fun showResult(title: String, sub: String, primary: String, action: () -> Unit) {
-        val dlg = Dialog(this)
-        dlg.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        dlg.setCancelable(false)
-        val panel = LinearLayout(this)
-        panel.orientation = LinearLayout.VERTICAL
-        panel.setPadding(dp(22), dp(22), dp(22), dp(22))
-        val pbg = GradientDrawable()
-        pbg.setColor(0xFF4F6FD6.toInt())
-        pbg.cornerRadius = dp(26).toFloat()
-        panel.background = pbg
+    // ---------- Adventure win screen ----------
 
-        panel.addView(label(title, 26f, Color.WHITE), lp(MATCH, WRAP))
-        val s = label(sub, 15f, 0xDDFFFFFF.toInt())
-        s.setPadding(0, dp(8), 0, dp(18))
-        panel.addView(s, lp(MATCH, WRAP))
+    private fun showWin(lvNum: Int, score: Int, goal: Int, unlocked: Boolean) {
+        screen = "win"
+        val ratio = score.toFloat() / goal.toFloat()
+        val stars = if (ratio >= 2f) 3 else if (ratio >= 1.4f) 2 else 1
+        val allDone = lvNum >= Levels.COUNT
+        val orange = 0xFFF5A31A.toInt()
+        val orangeEdge = 0xFFC77D00.toInt()
 
-        val green = 0xFF2DBE12.toInt()
-        val greenEdge = 0xFF1A8A07.toInt()
-        panel.addView(chunky(primary, green, greenEdge, null) {
-            dlg.dismiss()
-            action()
-        }, lp(MATCH, dp(66)))
-        val ml = lp(MATCH, dp(66))
-        ml.topMargin = dp(12)
-        panel.addView(chunky("Levels", green, greenEdge, null) {
-            dlg.dismiss()
-            showMap()
-        }, ml)
-        val hl = lp(MATCH, dp(66))
-        hl.topMargin = dp(12)
-        panel.addView(chunky("Home", green, greenEdge, null) {
-            dlg.dismiss()
-            showHome()
-        }, hl)
+        val content = LinearLayout(this)
+        content.orientation = LinearLayout.VERTICAL
+        content.gravity = Gravity.CENTER_HORIZONTAL
+        content.setPadding(dp(40), 0, dp(40), 0)
 
-        dlg.setContentView(panel)
-        val w = dlg.window
-        if (w != null) {
-            w.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-            w.setLayout((resources.displayMetrics.widthPixels * 0.86f).toInt(), WindowManager.LayoutParams.WRAP_CONTENT)
+        content.addView(View(this), lp(MATCH, 0, 1f))
+        content.addView(
+            label(if (allDone) "All levels done!" else "Level $lvNum", 24f, 0xFFFFD86B.toInt()),
+            lp(MATCH, WRAP)
+        )
+        val title = label("Complete!", 44f, Color.WHITE)
+        title.setPadding(0, dp(4), 0, dp(10))
+        content.addView(title, lp(MATCH, WRAP))
+        content.addView(StarsView(this, stars), lp(MATCH, dp(130)))
+        content.addView(label("Score", 18f, 0xFFB9C7FF.toInt()), lp(MATCH, WRAP))
+        content.addView(label(score.toString(), 60f, Color.WHITE), lp(MATCH, WRAP))
+        content.addView(label("Goal: $goal", 15f, 0xCCFFFFFF.toInt()), lp(MATCH, WRAP))
+        if (unlocked) {
+            val u = label("Level ${lvNum + 1} unlocked", 16f, 0xFF9BFFB0.toInt())
+            u.setPadding(0, dp(14), 0, 0)
+            content.addView(u, lp(MATCH, WRAP))
         }
-        dlg.show()
+        val next = chunky(
+            if (allDone) "Play Again" else "Next Level", orange, orangeEdge,
+            IconView(this, 2, orange)
+        ) { showAdventure(false) }
+        val nl = lp(MATCH, dp(80))
+        nl.topMargin = dp(30)
+        content.addView(next, nl)
+        content.addView(link("Levels") { showMap() }, lp(MATCH, WRAP))
+        content.addView(link("Home") { showHome() }, lp(MATCH, WRAP))
+        content.addView(View(this), lp(MATCH, 0, 1f))
+
+        val frame = FrameLayout(this)
+        frame.addView(ConfettiView(this), FrameLayout.LayoutParams(MATCH, MATCH))
+        frame.addView(content, FrameLayout.LayoutParams(MATCH, MATCH))
+
+        val bg = GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(0xFF2B2A9E.toInt(), 0xFF7A4BD8.toInt())
+        )
+        setScreen(frame, bg, Color.TRANSPARENT, Color.TRANSPARENT, false)
     }
+
+    // ---------- Adventure lose screen ----------
+
+    private fun showLose(lvNum: Int, score: Int, goal: Int) {
+        screen = "lose"
+        val orange = 0xFFF5A31A.toInt()
+        val orangeEdge = 0xFFC77D00.toInt()
+        val short = (goal - score).coerceAtLeast(0)
+
+        val content = LinearLayout(this)
+        content.orientation = LinearLayout.VERTICAL
+        content.gravity = Gravity.CENTER_HORIZONTAL
+        content.setPadding(dp(40), 0, dp(40), 0)
+
+        content.addView(View(this), lp(MATCH, 0, 1f))
+        content.addView(label("Level $lvNum", 24f, 0xFFFFD86B.toInt()), lp(MATCH, WRAP))
+        val title = label("Out of moves!", 38f, Color.WHITE)
+        title.setPadding(0, dp(4), 0, dp(24))
+        content.addView(title, lp(MATCH, WRAP))
+        content.addView(GoalBarView(this, score, goal), lp(MATCH, dp(90)))
+        val sh = label("$short points short", 16f, 0xFFFFD86B.toInt())
+        sh.setPadding(0, dp(6), 0, dp(4))
+        content.addView(sh, lp(MATCH, WRAP))
+        content.addView(label("Tip: clear lines to score more", 14f, 0xCCFFFFFF.toInt()), lp(MATCH, WRAP))
+
+        val retry = chunky("Retry", orange, orangeEdge, IconView(this, 2, orange)) {
+            showAdventure(false)
+        }
+        val rl = lp(MATCH, dp(80))
+        rl.topMargin = dp(36)
+        content.addView(retry, rl)
+        content.addView(link("Levels") { showMap() }, lp(MATCH, WRAP))
+        content.addView(link("Home") { showHome() }, lp(MATCH, WRAP))
+        content.addView(View(this), lp(MATCH, 0, 1f))
+
+        val bg = GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(0xFF2A2F6B.toInt(), 0xFF5B3A9E.toInt())
+        )
+        setScreen(content, bg, Color.TRANSPARENT, Color.TRANSPARENT, false)
+    }
+
+    // ---------- Classic game over ----------
 
     private fun showGameOver(score: Int, newBest: Boolean, best: Int) {
         screen = "over"
@@ -438,13 +484,7 @@ class MainActivity : ComponentActivity(), GameView.Listener {
         pl.topMargin = dp(40)
         root.addView(play, pl)
 
-        val home = label("Home", 20f, Color.WHITE)
-        home.setPadding(0, dp(24), 0, dp(24))
-        home.setOnClickListener {
-            Sfx.tap()
-            showHome()
-        }
-        root.addView(home, lp(MATCH, WRAP))
+        root.addView(link("Home") { showHome() }, lp(MATCH, WRAP))
         root.addView(View(this), lp(MATCH, 0, 1.2f))
 
         val bg = GradientDrawable(
@@ -456,7 +496,7 @@ class MainActivity : ComponentActivity(), GameView.Listener {
 
     // ---------- settings ----------
 
-    // one sound / music toggle tile
+    // one sound / vibrate toggle tile
     private fun tile(kind: Int, text: String, on: Boolean, onToggle: (Boolean) -> Unit): View {
         val box = LinearLayout(this)
         box.orientation = LinearLayout.VERTICAL
@@ -499,8 +539,9 @@ class MainActivity : ComponentActivity(), GameView.Listener {
             Sfx.setSound(on)
             if (on) Sfx.tap()
         }, lp(0, WRAP, 1f))
-        tiles.addView(tile(1, "Music", Sfx.musicOn) { on ->
-            Sfx.setMusic(on)
+        tiles.addView(tile(2, "Vibrate", Sfx.vibeOn) { on ->
+            Sfx.setVibe(on)
+            if (on) Sfx.vPlace()
         }, lp(0, WRAP, 1f))
         val tl = lp(MATCH, WRAP)
         tl.topMargin = dp(14)
