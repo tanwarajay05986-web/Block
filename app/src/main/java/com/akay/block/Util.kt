@@ -36,6 +36,8 @@ object Store {
         }
     }
 
+    private fun today(): Long = java.time.LocalDate.now().toEpochDay()
+
     fun classicBest(): Int = sp!!.getInt("classic_best", 0)
 
     fun setClassicBest(v: Int) {
@@ -88,6 +90,62 @@ object Store {
 
     fun setVibeOn(v: Boolean) {
         sp!!.edit().putBoolean("vibe_on", v).apply()
+    }
+
+    // daily victories: a day counts when at least one Adventure level was cleared on it
+    fun recordWin() {
+        val t = today()
+        val last = sp!!.getLong("win_day", -1L)
+        if (last == t) return
+        val st = if (last == t - 1) sp!!.getInt("streak", 0) + 1 else 1
+        val best = maxOf(sp!!.getInt("best_streak", 0), st)
+        sp!!.edit().putLong("win_day", t).putInt("streak", st).putInt("best_streak", best).apply()
+    }
+
+    fun currentStreak(): Int {
+        val last = sp!!.getLong("win_day", -1L)
+        val t = today()
+        return if (last == t || last == t - 1) sp!!.getInt("streak", 0) else 0
+    }
+
+    fun wonToday(): Boolean = sp!!.getLong("win_day", -1L) == today()
+
+    fun bestStreak(): Int = sp!!.getInt("best_streak", 0)
+
+    // numbers used by the medals
+    fun totalLines(): Int = sp!!.getInt("st_lines", 0)
+
+    fun maxCombo(): Int = sp!!.getInt("st_combo", 0)
+
+    fun perfects(): Int = sp!!.getInt("st_perfect", 0)
+
+    fun addStats(lines: Int, combo: Int, perfect: Int) {
+        sp!!.edit()
+            .putInt("st_lines", totalLines() + lines)
+            .putInt("st_combo", maxOf(maxCombo(), combo))
+            .putInt("st_perfect", perfects() + perfect)
+            .apply()
+    }
+
+    fun earnedMedals(): Set<String> =
+        HashSet<String>(sp!!.getStringSet("medals", emptySet()) ?: emptySet())
+
+    fun setEarnedMedals(s: Set<String>) {
+        sp!!.edit().putStringSet("medals", HashSet<String>(s)).apply()
+    }
+
+    fun seenMedals(): Set<String> =
+        HashSet<String>(sp!!.getStringSet("medals_seen", emptySet()) ?: emptySet())
+
+    fun setSeenMedals(s: Set<String>) {
+        sp!!.edit().putStringSet("medals_seen", HashSet<String>(s)).apply()
+    }
+
+    // chosen skin
+    fun skin(): Int = sp!!.getInt("skin", 0)
+
+    fun setSkin(v: Int) {
+        sp!!.edit().putInt("skin", v).apply()
     }
 }
 
