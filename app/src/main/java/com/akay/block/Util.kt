@@ -77,17 +77,17 @@ object Store {
         sp!!.edit().remove("adv_save").apply()
     }
 
-    // sound settings
+    // sound and vibration settings
     fun soundOn(): Boolean = sp!!.getBoolean("sound_on", true)
 
     fun setSoundOn(v: Boolean) {
         sp!!.edit().putBoolean("sound_on", v).apply()
     }
 
-    fun musicOn(): Boolean = sp!!.getBoolean("music_on", true)
+    fun vibeOn(): Boolean = sp!!.getBoolean("vibe_on", true)
 
-    fun setMusicOn(v: Boolean) {
-        sp!!.edit().putBoolean("music_on", v).apply()
+    fun setVibeOn(v: Boolean) {
+        sp!!.edit().putBoolean("vibe_on", v).apply()
     }
 }
 
