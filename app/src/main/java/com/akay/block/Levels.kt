@@ -8,16 +8,20 @@ class Level(val number: Int, val goal: Int, val prefill: Array<IntArray>, val ma
 object Levels {
     const val COUNT = 5555
 
+    // easy to medium: 105 at level 1, about 1700 at the last level
     fun goal(n: Int): Int {
-        val v = 100.0 + 9.0 * minOf(n, 60) + 0.6 * maxOf(0, n - 60)
+        val v = 100.0 + 7.0 * minOf(n, 60) + 0.22 * maxOf(0, n - 60)
         return (v / 5.0).toInt() * 5
     }
 
     fun maxCells(n: Int): Int = when {
-        n < 8 -> 4
-        n < 25 -> 6
+        n < 10 -> 4
+        n < 40 -> 6
         else -> 9
     }
+
+    // early levels get fewer awkward pieces
+    fun easyMix(n: Int): Boolean = n < 150
 
     private fun hasFullLine(b: Array<IntArray>): Boolean {
         for (i in 0 until 8) {
@@ -32,7 +36,7 @@ object Levels {
         val num = n.coerceIn(1, COUNT)
         val rnd = Random(num * 7919L + 13L)
         val b = Array(8) { IntArray(8) }
-        val want = if (num == 1) 0 else minOf(2 + (num * 9) / 10, 36)
+        val want = if (num == 1) 0 else minOf(2 + num / 2, 24)
         var count = 0
         var tries = 0
         while (count < want && tries < 600) {
