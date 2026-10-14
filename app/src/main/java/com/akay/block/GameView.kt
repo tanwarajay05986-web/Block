@@ -21,7 +21,7 @@ import kotlin.math.sin
 class GameView(ctx: Context) : View(ctx) {
 
     interface Listener {
-        fun onGameOver(score: Int)
+        fun onGameOver(score: Int, canRevive: Boolean)
         fun onLevelComplete(score: Int)
         fun onSettings()
         fun onBack()
@@ -32,11 +32,7 @@ class GameView(ctx: Context) : View(ctx) {
 
     private val N = 8
     private val den = ctx.resources.displayMetrics.density
-    private val BG = 0xFF3B4F8F.toInt()
-    private val COLORS = intArrayOf(
-        0, 0xFF2FBF3C.toInt(), 0xFF3C5BE8.toInt(), 0xFFC93131.toInt(), 0xFFF0832B.toInt(),
-        0xFFEDBA3A.toInt(), 0xFF8E4FD8.toInt(), 0xFF2BB4E5.toInt()
-    )
+    private var skin: Skin = Skins.cur()
 
     private val board = Array(N) { IntArray(N) }
     private val justPlaced = Array(N) { BooleanArray(N) }
@@ -47,6 +43,12 @@ class GameView(ctx: Context) : View(ctx) {
     private var combo = 0
     private var streak = 0
     private var over = false
+    private var revived = false
+
+    // numbers for the medals (the activity collects them with takeStats)
+    private var stLines = 0
+    private var stCombo = 0
+    private var stPerfect = 0
 
     // Adventure level (null in Classic mode)
     private var level: Level? = null
@@ -136,6 +138,20 @@ class GameView(ctx: Context) : View(ctx) {
         return a
     }
 
+    fun applySkin() {
+        skin = Skins.cur()
+        invalidate()
+    }
+
+    // gives the numbers collected so far and starts counting again from zero
+    fun takeStats(): IntArray {
+        val r = intArrayOf(stLines, stCombo, stPerfect)
+        stLines = 0
+        stCombo = 0
+        stPerfect = 0
+        return r
+    }
+
     // ---------- game state ----------
 
     private fun cancelAnims() {
@@ -161,6 +177,7 @@ class GameView(ctx: Context) : View(ctx) {
         combo = 0
         streak = 0
         over = false
+        revived = false
         fades.clear()
         sparks.clear()
         popT = 1f
@@ -192,6 +209,34 @@ class GameView(ctx: Context) : View(ctx) {
             for (c in 0 until N) board[r][c] = lv.prefill[r][c]
         }
         refill()
+        invalidate()
+    }
+
+    // Revive (once per game): clears the 3 fullest rows and gives new pieces
+    fun revive() {
+        if (!over) return
+        revived = true
+        fadeAnim?.cancel()
+        fades.clear()
+        val order = (0 until N).sortedByDescending { r -> board[r].count { it != 0 } }
+        for (k in 0 until 3) {
+            val r = order[k]
+            for (c in 0 until N) {
+                if (board[r][c] != 0) {
+                    fades.add(Fade(r, c, board[r][c]))
+                    spawnSparks(r, c, board[r][c])
+                    board[r][c] = 0
+                }
+            }
+        }
+        startFade()
+        over = false
+        combo = 0
+        streak = 0
+        for (i in 0..2) tray[i] = null
+        refill()
+        Sfx.best()
+        Sfx.vPlace()
         invalidate()
     }
 
@@ -248,13 +293,18 @@ class GameView(ctx: Context) : View(ctx) {
         }
     }
 
+    // new pieces: easy levels make sure at least 2 of the 3 pieces fit somewhere
     private fun refill() {
-        val mx = level?.maxCells ?: 9
+        val lv = level
+        val mx = lv?.maxCells ?: 9
+        val easy = lv != null && Levels.easyMix(lv.number)
+        val need = if (easy) 2 else 1
         var tries = 0
         while (true) {
-            for (i in 0..2) tray[i] = Shapes.randomMax(rnd, mx)
+            for (i in 0..2) tray[i] = Shapes.randomPick(rnd, mx, easy)
             tries++
-            if (tries > 30 || tray.any { it != null && fitsAnywhere(it) }) break
+            val fit = tray.count { it != null && fitsAnywhere(it) }
+            if (fit >= need || (tries > 25 && fit >= 1) || tries > 60) break
         }
         spawnAnim?.cancel()
         spawnT = 0f
@@ -317,6 +367,9 @@ class GameView(ctx: Context) : View(ctx) {
             gain += lines * lines * 10 + (combo - 1) * 10 * lines
             val perfect = board.all { row -> row.all { it == 0 } }
             if (perfect) gain += 300
+            stLines += lines
+            if (combo > stCombo) stCombo = combo
+            if (perfect) stPerfect++
             startFade()
             showPop(gain, lines, perfect)
             if (lines >= 3 || combo >= 3 || perfect) shake()
@@ -387,7 +440,7 @@ class GameView(ctx: Context) : View(ctx) {
         if (!alive) {
             over = true
             Sfx.vLose()
-            val run = Runnable { listener?.onGameOver(score) }
+            val run = Runnable { listener?.onGameOver(score, !revived) }
             overRun = run
             postDelayed(run, 700)
         }
@@ -630,7 +683,7 @@ class GameView(ctx: Context) : View(ctx) {
         }
         c.restore()
         c.drawCircle(cx, cy, r * 0.82f, p)
-        p.color = BG
+        p.color = skin.bg
         c.drawCircle(cx, cy, r * 0.36f, p)
     }
 
@@ -688,7 +741,7 @@ class GameView(ctx: Context) : View(ctx) {
         val x1 = w * 0.75f
         val frac = (shownScore / lv.goal).coerceIn(0f, 1f)
         rf.set(x0, by - 9f * den, x1, by + 9f * den)
-        p.color = 0xFF1D2240.toInt()
+        p.color = skin.inner
         c.drawRoundRect(rf, 9f * den, 9f * den, p)
         if (frac > 0.01f) {
             rf.set(x0, by - 9f * den, x0 + (x1 - x0) * frac, by + 9f * den)
@@ -734,13 +787,13 @@ class GameView(ctx: Context) : View(ctx) {
     private fun drawBoard(c: Canvas) {
         p.style = Paint.Style.FILL
         rf.set(bl - 8f * den, bt - 8f * den, bl + cell * N + 8f * den, bt + cell * N + 8f * den)
-        p.color = 0xFF2E3C75.toInt()
+        p.color = skin.outer
         c.drawRoundRect(rf, 14f * den, 14f * den, p)
         rf.set(bl - 2f * den, bt - 2f * den, bl + cell * N + 2f * den, bt + cell * N + 2f * den)
-        p.color = 0xFF1D2240.toInt()
+        p.color = skin.inner
         c.drawRoundRect(rf, 8f * den, 8f * den, p)
 
-        p.color = 0xFF262C54.toInt()
+        p.color = skin.grid
         for (i in 1 until N) {
             rf.set(bl + i * cell - den / 2f, bt, bl + i * cell + den / 2f, bt + N * cell)
             c.drawRect(rf, p)
@@ -802,7 +855,7 @@ class GameView(ctx: Context) : View(ctx) {
         if (sparks.isEmpty()) return
         p.style = Paint.Style.FILL
         for (s in sparks) {
-            p.color = withAlpha(mixColor(COLORS[s.color], Color.WHITE, 0.3f), (s.life * 255f).toInt())
+            p.color = withAlpha(mixColor(skin.colors[s.color], Color.WHITE, 0.3f), (s.life * 255f).toInt())
             rf.set(s.x - s.size / 2f, s.y - s.size / 2f, s.x + s.size / 2f, s.y + s.size / 2f)
             c.drawRect(rf, p)
         }
@@ -865,7 +918,7 @@ class GameView(ctx: Context) : View(ctx) {
 
     // one bevelled block
     private fun drawBlock(c: Canvas, x: Float, y: Float, s: Float, color: Int, alpha: Int) {
-        val base = COLORS[color]
+        val base = skin.colors[color]
         val gap = s * 0.02f
         val x0 = x + gap
         val y0 = y + gap
