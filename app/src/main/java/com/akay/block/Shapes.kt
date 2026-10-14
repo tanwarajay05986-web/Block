@@ -39,6 +39,9 @@ object Shapes {
         listOf("X..", "XXX"), listOf("..X", "XXX"), listOf("XXX", "X.."), listOf("XXX", "..X")
     )
 
+    // the awkward ones: 5-in-a-line, big L and S / Z shapes
+    private val HARD = setOf(7, 8, 17, 18, 19, 20, 25, 26, 27, 28)
+
     fun count(rows: List<String>): Int {
         var n = 0
         for (r in rows) for (ch in r) if (ch == 'X') n++
@@ -47,14 +50,22 @@ object Shapes {
 
     fun random(rnd: Random): Piece = Piece(all[rnd.nextInt(all.size)], 1 + rnd.nextInt(7))
 
-    // a random piece with at most maxCells blocks (used for easier early levels)
-    fun randomMax(rnd: Random, maxCells: Int): Piece {
-        var shape = all[rnd.nextInt(all.size)]
-        var tries = 0
-        while (count(shape) > maxCells && tries < 30) {
-            shape = all[rnd.nextInt(all.size)]
-            tries++
+    // a random piece with at most maxCells blocks; when easy is true the awkward shapes show up less
+    fun randomPick(rnd: Random, maxCells: Int, easy: Boolean): Piece {
+        val w = IntArray(all.size)
+        var total = 0
+        for (i in all.indices) {
+            if (count(all[i]) > maxCells) continue
+            w[i] = if (i == 0) 2 else if (easy && HARD.contains(i)) 1 else 3
+            total += w[i]
         }
-        return Piece(shape, 1 + rnd.nextInt(7))
+        if (total == 0) return random(rnd)
+        var r = rnd.nextInt(total)
+        for (i in all.indices) {
+            if (w[i] == 0) continue
+            r -= w[i]
+            if (r < 0) return Piece(all[i], 1 + rnd.nextInt(7))
+        }
+        return random(rnd)
     }
 }
