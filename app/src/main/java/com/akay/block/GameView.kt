@@ -10,7 +10,6 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
-import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.animation.OvershootInterpolator
@@ -321,12 +320,12 @@ class GameView(ctx: Context) : View(ctx) {
             startFade()
             showPop(gain, lines, perfect)
             if (lines >= 3 || combo >= 3 || perfect) shake()
-            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+            Sfx.vClear(combo, lines, perfect)
             Sfx.clear(combo, lines, perfect)
         } else {
             streak++
             if (streak >= 3) combo = 0
-            performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            Sfx.vPlace()
             Sfx.place()
         }
         placeT = 0f
@@ -337,6 +336,7 @@ class GameView(ctx: Context) : View(ctx) {
         val lv = level
         if (lv != null && score >= lv.goal) {
             over = true
+            Sfx.vWin()
             val run = Runnable { listener?.onLevelComplete(score) }
             overRun = run
             postDelayed(run, 900)
@@ -386,6 +386,7 @@ class GameView(ctx: Context) : View(ctx) {
         val alive = tray.any { it != null && fitsAnywhere(it) }
         if (!alive) {
             over = true
+            Sfx.vLose()
             val run = Runnable { listener?.onGameOver(score) }
             overRun = run
             postDelayed(run, 700)
@@ -488,6 +489,7 @@ class GameView(ctx: Context) : View(ctx) {
         retT = 0f
         retAnim = anim(200, { retT = it }, { retIdx = -1 })
         Sfx.back()
+        Sfx.vBack()
     }
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
@@ -516,6 +518,7 @@ class GameView(ctx: Context) : View(ctx) {
                     updateSnap()
                     invalidate()
                     Sfx.tap()
+                    Sfx.vPick()
                 }
             }
             MotionEvent.ACTION_MOVE -> {
