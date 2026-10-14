@@ -31,7 +31,7 @@ class LogoView(ctx: Context) : View(ctx) {
 
     override fun onMeasure(wSpec: Int, hSpec: Int) {
         val w = MeasureSpec.getSize(wSpec)
-        setMeasuredDimension(w, (w * 0.62f).toInt())
+        setMeasuredDimension(w, (w * 0.5f).toInt())
     }
 
     override fun onDraw(c: Canvas) {
@@ -47,7 +47,7 @@ class LogoView(ctx: Context) : View(ctx) {
         total = 0f
         for (ch in word) total += fillP.measureText(ch.toString())
         var x = (w - total) / 2f
-        val y = height * 0.55f
+        val y = height * 0.58f
         for (i in word.indices) {
             val s = word[i].toString()
             val wc = fillP.measureText(s)
@@ -126,7 +126,8 @@ class CrownView(ctx: Context) : View(ctx) {
     }
 }
 
-// settings icons: kind 0 = speaker (sound), kind 2 = phone (vibrate). A red slash is drawn when off.
+// settings icons: 0 = speaker (sound), 2 = phone (vibrate), 3 = t-shirt (skin).
+// A red slash is drawn when off.
 class ToggleIcon(ctx: Context, private val kind: Int) : View(ctx) {
     var off = false
         set(v) {
@@ -163,7 +164,7 @@ class ToggleIcon(ctx: Context, private val kind: Int) : View(ctx) {
                 rf.set(ox + 0.2f * s, oy + 0.2f * s, ox + 0.8f * s, oy + 0.8f * s)
                 c.drawArc(rf, -50f, 100f, false, p)
             }
-        } else {
+        } else if (kind == 2) {
             p.style = Paint.Style.STROKE
             p.strokeWidth = 0.07f * s
             p.strokeCap = Paint.Cap.ROUND
@@ -175,6 +176,22 @@ class ToggleIcon(ctx: Context, private val kind: Int) : View(ctx) {
                 c.drawLine(ox + 0.13f * s, oy + 0.42f * s, ox + 0.13f * s, oy + 0.58f * s, p)
                 c.drawLine(ox + 0.87f * s, oy + 0.42f * s, ox + 0.87f * s, oy + 0.58f * s, p)
             }
+        } else {
+            path.reset()
+            path.moveTo(ox + 0.30f * s, oy + 0.22f * s)
+            path.lineTo(ox + 0.42f * s, oy + 0.18f * s)
+            path.quadTo(ox + 0.5f * s, oy + 0.30f * s, ox + 0.58f * s, oy + 0.18f * s)
+            path.lineTo(ox + 0.70f * s, oy + 0.22f * s)
+            path.lineTo(ox + 0.90f * s, oy + 0.38f * s)
+            path.lineTo(ox + 0.80f * s, oy + 0.52f * s)
+            path.lineTo(ox + 0.70f * s, oy + 0.44f * s)
+            path.lineTo(ox + 0.70f * s, oy + 0.84f * s)
+            path.lineTo(ox + 0.30f * s, oy + 0.84f * s)
+            path.lineTo(ox + 0.30f * s, oy + 0.44f * s)
+            path.lineTo(ox + 0.20f * s, oy + 0.52f * s)
+            path.lineTo(ox + 0.10f * s, oy + 0.38f * s)
+            path.close()
+            c.drawPath(path, p)
         }
         if (off) {
             p.style = Paint.Style.STROKE
@@ -351,6 +368,130 @@ class GoalBarView(ctx: Context, private val score: Int, private val goal: Int) :
             p.color = 0xFF3E9BFF.toInt()
             rf.set(left, top, left + (right - left) * frac, top + bar)
             c.drawRoundRect(rf, bar / 2f, bar / 2f, p)
+        }
+    }
+}
+
+// medal with a ribbon and a star. Grey when it is not earned yet
+class MedalView(ctx: Context, private val color: Int, private val earned: Boolean) : View(ctx) {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val path = Path()
+
+    override fun onDraw(c: Canvas) {
+        val s = minOf(width, height).toFloat()
+        val ox = (width - s) / 2f
+        val oy = (height - s) / 2f
+        p.style = Paint.Style.FILL
+        p.color = if (earned) 0xFFE0453A.toInt() else 0xFF3A4570.toInt()
+        path.reset()
+        path.moveTo(ox + 0.22f * s, oy)
+        path.lineTo(ox + 0.42f * s, oy)
+        path.lineTo(ox + 0.52f * s, oy + 0.5f * s)
+        path.lineTo(ox + 0.32f * s, oy + 0.5f * s)
+        path.close()
+        c.drawPath(path, p)
+        path.reset()
+        path.moveTo(ox + 0.58f * s, oy)
+        path.lineTo(ox + 0.78f * s, oy)
+        path.lineTo(ox + 0.68f * s, oy + 0.5f * s)
+        path.lineTo(ox + 0.48f * s, oy + 0.5f * s)
+        path.close()
+        c.drawPath(path, p)
+
+        p.color = if (earned) mixColor(color, Color.BLACK, 0.3f) else 0xFF3A4570.toInt()
+        c.drawCircle(ox + 0.5f * s, oy + 0.64f * s, 0.34f * s, p)
+        p.color = if (earned) color else 0xFF55608F.toInt()
+        c.drawCircle(ox + 0.5f * s, oy + 0.64f * s, 0.28f * s, p)
+
+        path.reset()
+        for (i in 0 until 10) {
+            val rad = if (i % 2 == 0) 0.17f * s else 0.08f * s
+            val a = Math.toRadians(-90.0 + i * 36.0)
+            val x = ox + 0.5f * s + (rad * Math.cos(a)).toFloat()
+            val y = oy + 0.64f * s + (rad * Math.sin(a)).toFloat()
+            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        }
+        path.close()
+        p.color = if (earned) Color.WHITE else 0xFF3A4570.toInt()
+        c.drawPath(path, p)
+    }
+}
+
+// round "WIN" badge with a crown, for the daily victories card
+class WinBadgeView(ctx: Context) : View(ctx) {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val tp = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val rf = RectF()
+
+    init {
+        tp.typeface = Typeface.DEFAULT_BOLD
+        tp.textAlign = Paint.Align.CENTER
+        tp.color = Color.WHITE
+    }
+
+    override fun onDraw(c: Canvas) {
+        val s = minOf(width, height).toFloat()
+        val ox = (width - s) / 2f
+        val oy = (height - s) / 2f
+        p.style = Paint.Style.FILL
+        p.color = 0xFF16277A.toInt()
+        c.drawCircle(ox + 0.5f * s, oy + 0.46f * s, 0.46f * s, p)
+        p.color = 0xFF2A3F9E.toInt()
+        c.drawCircle(ox + 0.5f * s, oy + 0.46f * s, 0.4f * s, p)
+        p.color = 0xFFFFC21A.toInt()
+        drawCrown(c, ox + 0.5f * s, oy + 0.36f * s, 0.56f * s, p)
+        p.color = 0xFF2E9E4F.toInt()
+        rf.set(ox + 0.12f * s, oy + 0.66f * s, ox + 0.88f * s, oy + 0.92f * s)
+        c.drawRoundRect(rf, 0.06f * s, 0.06f * s, p)
+        tp.textSize = 0.2f * s
+        c.drawText("WIN", ox + 0.5f * s, oy + 0.85f * s, tp)
+    }
+}
+
+// green tick circle (done today) or grey (not yet)
+class CheckView(ctx: Context, private val on: Boolean) : View(ctx) {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val path = Path()
+
+    override fun onDraw(c: Canvas) {
+        val s = minOf(width, height).toFloat()
+        val ox = (width - s) / 2f
+        val oy = (height - s) / 2f
+        p.style = Paint.Style.FILL
+        p.color = if (on) 0xFF2DBE12.toInt() else 0xFFB8BCD0.toInt()
+        c.drawCircle(ox + 0.5f * s, oy + 0.5f * s, 0.5f * s, p)
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 0.12f * s
+        p.strokeCap = Paint.Cap.ROUND
+        p.strokeJoin = Paint.Join.ROUND
+        p.color = Color.WHITE
+        path.reset()
+        path.moveTo(ox + 0.26f * s, oy + 0.52f * s)
+        path.lineTo(ox + 0.43f * s, oy + 0.68f * s)
+        path.lineTo(ox + 0.74f * s, oy + 0.34f * s)
+        c.drawPath(path, p)
+    }
+}
+
+// the 7 block colours of a skin, shown in a small strip
+class SwatchView(ctx: Context, private val colors: IntArray, private val bg: Int) : View(ctx) {
+    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val rf = RectF()
+
+    override fun onDraw(c: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        p.style = Paint.Style.FILL
+        p.color = bg
+        rf.set(0f, 0f, w, h)
+        c.drawRoundRect(rf, h * 0.25f, h * 0.25f, p)
+        val sq = h * 0.5f
+        val gap = (w - sq * 7f) / 8f
+        for (i in 1..7) {
+            p.color = colors[i]
+            val x = gap + (i - 1) * (sq + gap)
+            rf.set(x, (h - sq) / 2f, x + sq, (h + sq) / 2f)
+            c.drawRoundRect(rf, sq * 0.2f, sq * 0.2f, p)
         }
     }
 }
