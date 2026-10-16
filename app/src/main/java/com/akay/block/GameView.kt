@@ -6,9 +6,12 @@ import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.view.MotionEvent
 import android.view.View
@@ -89,16 +92,29 @@ class GameView(ctx: Context) : View(ctx) {
 
     private val fades = ArrayList<Fade>()
     private val sparks = ArrayList<Spark>()
+    private val glowRows = ArrayList<Int>()
+    private val glowCols = ArrayList<Int>()
+    private var lights = false
     private var fadeT = 1f
     private var popT = 1f
     private var placeT = 1f
     private var spawnT = 1f
     private var liftT = 1f
     private var shakeT = 1f
+
+    // floating text: 0 = Combo, 1 = Great!, 2 = Excellent!, 3 = Perfect!
+    private var popKind = 0
     private var popText = ""
     private var popPhrase = ""
+    private var popY = 0f
     private var lastNano = 0L
     private val ovs = OvershootInterpolator(1.6f)
+
+    private val RAINBOW = intArrayOf(
+        0xFFFF4DA6.toInt(), 0xFF00E5FF.toInt(), 0xFF7CFF3D.toInt(),
+        0xFFFFE600.toInt(), 0xFFFF8A00.toInt(), 0xFFFF4DA6.toInt()
+    )
+    private val gm = Matrix()
 
     private var fadeAnim: ValueAnimator? = null
     private var popAnim: ValueAnimator? = null
@@ -180,6 +196,9 @@ class GameView(ctx: Context) : View(ctx) {
         revived = false
         fades.clear()
         sparks.clear()
+        glowRows.clear()
+        glowCols.clear()
+        lights = false
         popT = 1f
         placeT = 1f
         spawnT = 1f
@@ -218,6 +237,9 @@ class GameView(ctx: Context) : View(ctx) {
         revived = true
         fadeAnim?.cancel()
         fades.clear()
+        glowRows.clear()
+        glowCols.clear()
+        lights = false
         val order = (0 until N).sortedByDescending { r -> board[r].count { it != 0 } }
         for (k in 0 until 3) {
             val r = order[k]
@@ -354,24 +376,30 @@ class GameView(ctx: Context) : View(ctx) {
             for (r in rows) for (c in 0 until N) set.add(r * N + c)
             for (c in cols) for (r in 0 until N) set.add(r * N + c)
             fades.clear()
+            // the whole completed line takes the colour of the piece that completed it
             for (k in set) {
                 val rr = k / N
                 val cc = k % N
-                fades.add(Fade(rr, cc, board[rr][cc]))
-                spawnSparks(rr, cc, board[rr][cc])
+                fades.add(Fade(rr, cc, pc.color))
+                spawnSparks(rr, cc, pc.color)
             }
             for (k in set) {
                 board[k / N][k % N] = 0
                 justPlaced[k / N][k % N] = false
             }
+            glowRows.clear()
+            glowCols.clear()
+            glowRows.addAll(rows)
+            glowCols.addAll(cols)
             gain += lines * lines * 10 + (combo - 1) * 10 * lines
             val perfect = board.all { row -> row.all { it == 0 } }
             if (perfect) gain += 300
             stLines += lines
             if (combo > stCombo) stCombo = combo
             if (perfect) stPerfect++
+            lights = lines >= 3 || perfect
             startFade()
-            showPop(gain, lines, perfect)
+            showPop(gain, lines, perfect, rows)
             if (lines >= 3 || combo >= 3 || perfect) shake()
             Sfx.vClear(combo, lines, perfect)
             Sfx.clear(combo, lines, perfect)
@@ -462,9 +490,15 @@ class GameView(ctx: Context) : View(ctx) {
         scoreAnim = a
     }
 
+    // the line effect runs for 0.7 s, then everything is cleared
     private fun startFade() {
         fadeT = 0f
-        fadeAnim = anim(320, { fadeT = it }, { fades.clear() })
+        fadeAnim = anim(700, { fadeT = it }, {
+            fades.clear()
+            glowRows.clear()
+            glowCols.clear()
+            lights = false
+        })
     }
 
     private fun shake() {
@@ -473,18 +507,26 @@ class GameView(ctx: Context) : View(ctx) {
         shakeAnim = anim(380, { shakeT = it })
     }
 
-    private fun showPop(gain: Int, lines: Int, perfect: Boolean) {
-        popText = "+$gain"
-        popPhrase = when {
-            perfect -> "Perfect!"
-            lines >= 4 || combo >= 4 -> "Amazing!"
-            lines == 3 || combo == 3 -> "Excellent!"
-            lines == 2 || combo == 2 -> "Great!"
-            else -> "Good!"
+    // 1 line = Combo, 2 lines = Great!, 3 lines = Excellent!, 4+ lines or empty board = Perfect!
+    private fun showPop(gain: Int, lines: Int, perfect: Boolean, rows: List<Int>) {
+        popKind = when {
+            perfect || lines >= 4 -> 3
+            lines == 3 -> 2
+            lines == 2 -> 1
+            else -> 0
+        }
+        popText = if (popKind == 0) "" else "+$gain"
+        popPhrase = arrayOf("Combo", "Great!", "Excellent!", "Perfect!")[popKind]
+        val mid = bt + cell * 3.6f
+        popY = if (rows.isNotEmpty()) {
+            val avg = rows.sum().toFloat() / rows.size
+            (bt + cell * (avg + 0.5f)).coerceIn(bt + cell * 2.2f, bt + cell * 5.4f)
+        } else {
+            mid
         }
         popAnim?.cancel()
         popT = 0f
-        popAnim = anim(950, { popT = it })
+        popAnim = anim(1150, { popT = it })
     }
 
     // ---------- size and touch ----------
@@ -646,6 +688,8 @@ class GameView(ctx: Context) : View(ctx) {
         c.translate(sx, 0f)
         drawBoard(c)
         drawFades(c)
+        drawGlow(c)
+        drawLights(c)
         drawSparks(c)
         c.restore()
 
@@ -657,18 +701,38 @@ class GameView(ctx: Context) : View(ctx) {
         if (sparks.isNotEmpty()) postInvalidateOnAnimation() else lastNano = 0L
     }
 
-    private fun drawOutlined(
-        c: Canvas, s: String, x: Float, y: Float, size: Float, fill: Int, stroke: Int, alpha: Int
+    // text with a soft glow, a thick outline and a fill colour
+    private fun drawFancy(
+        c: Canvas, s: String, x: Float, y: Float, size: Float,
+        fill: Int, stroke: Int, glow: Int, alpha: Int
     ) {
         tp.textSize = size
         tp.style = Paint.Style.STROKE
-        tp.strokeWidth = size * 0.16f
         tp.strokeJoin = Paint.Join.ROUND
+        tp.strokeWidth = size * 0.34f
+        tp.color = withAlpha(glow, alpha / 3)
+        c.drawText(s, x, y, tp)
+        tp.strokeWidth = size * 0.2f
         tp.color = withAlpha(stroke, alpha)
         c.drawText(s, x, y, tp)
         tp.style = Paint.Style.FILL
         tp.color = withAlpha(fill, alpha)
         c.drawText(s, x, y, tp)
+    }
+
+    private fun drawStar(c: Canvas, cx: Float, cy: Float, r: Float, color: Int) {
+        path.reset()
+        for (i in 0 until 10) {
+            val rad = if (i % 2 == 0) r else r * 0.45f
+            val a = Math.toRadians(-90.0 + i * 36.0)
+            val x = cx + (rad * Math.cos(a)).toFloat()
+            val y = cy + (rad * Math.sin(a)).toFloat()
+            if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+        }
+        path.close()
+        p.style = Paint.Style.FILL
+        p.color = color
+        c.drawPath(path, p)
     }
 
     private fun drawGear(c: Canvas, cx: Float, cy: Float, r: Float) {
@@ -835,20 +899,131 @@ class GameView(ctx: Context) : View(ctx) {
         }
     }
 
+    // the completed line: bright in the colour of the last piece, then it shrinks away
     private fun drawFades(c: Canvas) {
         if (fades.isEmpty()) return
         val t = fadeT
-        val a = ((1f - t) * 255f).toInt()
+        val hold = 0.55f
         for (f in fades) {
-            val s = cell * (1f + 0.25f * t)
+            val a: Int
+            val k: Float
+            if (t < hold) {
+                a = 255
+                k = 1f + 0.05f * sin(t / hold * PI.toFloat())
+            } else {
+                val u = (t - hold) / (1f - hold)
+                a = ((1f - u) * 255f).toInt()
+                k = 1f + 0.22f * u
+            }
+            val s = cell * k
             val x = bl + f.c * cell - (s - cell) / 2f
             val y = bt + f.r * cell - (s - cell) / 2f
             drawBlock(c, x, y, s, f.color, a)
-            p.style = Paint.Style.FILL
-            p.color = withAlpha(Color.WHITE, (150f * (1f - t)).toInt())
-            rf.set(x, y, x + s, y + s)
-            c.drawRect(rf, p)
+            val sheen = (if (t < 0.3f) 150f * (1f - t / 0.3f) else 0f) + (if (t < hold) 30f else 0f)
+            if (sheen > 0f) {
+                p.style = Paint.Style.FILL
+                p.color = withAlpha(Color.WHITE, (sheen * a / 255f).toInt())
+                rf.set(x, y, x + s, y + s)
+                c.drawRect(rf, p)
+            }
         }
+    }
+
+    // rainbow lights glowing on both sides of every completed line
+    private fun drawGlow(c: Canvas) {
+        if (glowRows.isEmpty() && glowCols.isEmpty()) return
+        val t = fadeT
+        val inten = when {
+            t < 0.12f -> t / 0.12f
+            t > 0.6f -> (1f - t) / 0.4f
+            else -> 1f
+        }
+        if (inten <= 0f) return
+        val bw = cell * N
+        val shift = t * bw * 1.2f
+        val ths = floatArrayOf(0.1f, 0.2f, 0.32f, 0.46f)
+        val als = intArrayOf(230, 130, 70, 32)
+        p.style = Paint.Style.FILL
+
+        if (glowRows.isNotEmpty()) {
+            val hs = LinearGradient(0f, 0f, bw * 0.5f, 0f, RAINBOW, null, Shader.TileMode.REPEAT)
+            gm.reset()
+            gm.postTranslate(bl + shift, 0f)
+            hs.setLocalMatrix(gm)
+            p.shader = hs
+            for (r in glowRows) {
+                val top = bt + r * cell
+                val bot = top + cell
+                for (i in ths.indices) {
+                    p.alpha = (als[i] * inten).toInt()
+                    val th = cell * ths[i]
+                    rf.set(bl, top - th, bl + bw, top)
+                    c.drawRect(rf, p)
+                    rf.set(bl, bot, bl + bw, bot + th)
+                    c.drawRect(rf, p)
+                }
+            }
+            p.shader = null
+        }
+        if (glowCols.isNotEmpty()) {
+            val vs = LinearGradient(0f, 0f, 0f, bw * 0.5f, RAINBOW, null, Shader.TileMode.REPEAT)
+            gm.reset()
+            gm.postTranslate(0f, bt + shift)
+            vs.setLocalMatrix(gm)
+            p.shader = vs
+            for (cc in glowCols) {
+                val left = bl + cc * cell
+                val right = left + cell
+                for (i in ths.indices) {
+                    p.alpha = (als[i] * inten).toInt()
+                    val th = cell * ths[i]
+                    rf.set(left - th, bt, left, bt + bw)
+                    c.drawRect(rf, p)
+                    rf.set(right, bt, right + th, bt + bw)
+                    c.drawRect(rf, p)
+                }
+            }
+            p.shader = null
+        }
+    }
+
+    // twinkling green lights around the board (3 or more lines)
+    private fun drawLights(c: Canvas) {
+        if (!lights || fadeT >= 1f) return
+        val t = fadeT
+        val inten = when {
+            t < 0.15f -> t / 0.15f
+            t > 0.75f -> (1f - t) / 0.25f
+            else -> 1f
+        }
+        val x0 = bl - 14f * den
+        val y0 = bt - 14f * den
+        val x1 = bl + cell * N + 14f * den
+        val y1 = bt + cell * N + 14f * den
+        val gap = cell * 0.72f
+        var k = 0
+        var x = x0
+        while (x <= x1 + 1f) {
+            dot(c, x, y0, k++, inten)
+            dot(c, x, y1, k++, inten)
+            x += gap
+        }
+        var y = y0 + gap
+        while (y < y1 - 1f) {
+            dot(c, x0, y, k++, inten)
+            dot(c, x1, y, k++, inten)
+            y += gap
+        }
+    }
+
+    private fun dot(c: Canvas, x: Float, y: Float, k: Int, inten: Float) {
+        val tw = 0.55f + 0.45f * sin(fadeT * 22f + k * 0.9f)
+        val a = (255f * inten * tw).toInt()
+        p.style = Paint.Style.FILL
+        p.color = withAlpha(0xFF3DFF7A.toInt(), a / 3)
+        c.drawCircle(x, y, 6f * den, p)
+        p.color = withAlpha(0xFF8DFFB0.toInt(), a)
+        c.drawCircle(x, y, 3f * den, p)
     }
 
     private fun drawSparks(c: Canvas) {
@@ -901,19 +1076,63 @@ class GameView(ctx: Context) : View(ctx) {
         }
     }
 
+    // floating text: pops up, drifts upward and disappears
     private fun drawPop(c: Canvas, w: Float) {
-        if (popT >= 1f || popText.isEmpty()) return
+        if (popT >= 1f || popPhrase.isEmpty()) return
         val t = popT
         val a = when {
-            t < 0.15f -> t / 0.15f
-            t > 0.7f -> (1f - t) / 0.3f
+            t < 0.12f -> t / 0.12f
+            t > 0.68f -> (1f - t) / 0.32f
             else -> 1f
         }
-        val alpha = (a * 255f).toInt()
-        val cy = bt + cell * 3.2f - t * 30f * den
+        val alpha = (a * 255f).toInt().coerceIn(0, 255)
+        val sc = 0.4f + 0.6f * ovs.getInterpolation(minOf(1f, t / 0.25f))
+        val cy = popY - t * 36f * den
         tp.textAlign = Paint.Align.CENTER
-        drawOutlined(c, popText, w / 2f, cy, 46f * den, 0xFFFFE066.toInt(), 0xFFB23A00.toInt(), alpha)
-        drawOutlined(c, popPhrase, w / 2f, cy + 70f * den, 40f * den, 0xFFFFC21A.toInt(), 0xFF9A3B00.toInt(), alpha)
+
+        c.save()
+        c.translate(w / 2f, cy)
+        c.scale(sc, sc)
+        when (popKind) {
+            0 -> {
+                drawFancy(
+                    c, "Combo", 0f, 18f * den, 58f * den,
+                    0xFFEAF6FF.toInt(), 0xFF2E5BFF.toInt(), 0xFF7FA8FF.toInt(), alpha
+                )
+            }
+            else -> {
+                drawFancy(
+                    c, popText, 0f, -14f * den, 46f * den,
+                    0xFFFFF3A0.toInt(), 0xFFE08A00.toInt(), 0xFFFFB300.toInt(), alpha
+                )
+                val size = (if (popKind == 1) 46f else if (popKind == 2) 48f else 52f) * den
+                val fill = when (popKind) {
+                    1 -> 0xFFFF3B3B.toInt()
+                    2 -> 0xFFFFD21F.toInt()
+                    else -> 0xFFFFF176.toInt()
+                }
+                val stroke = when (popKind) {
+                    1 -> 0xFFFFFFFF.toInt()
+                    2 -> 0xFFB86B00.toInt()
+                    else -> 0xFFE65100.toInt()
+                }
+                val glow = when (popKind) {
+                    1 -> 0xFFFF6B6B.toInt()
+                    2 -> 0xFFFFC21A.toInt()
+                    else -> 0xFFFF9100.toInt()
+                }
+                val py = 52f * den
+                drawFancy(c, popPhrase, 0f, py, size, fill, stroke, glow, alpha)
+                if (popKind != 2) {
+                    tp.textSize = size
+                    val tw = tp.measureText(popPhrase)
+                    val sa = withAlpha(0xFFFF9EDB.toInt(), alpha)
+                    drawStar(c, -tw / 2f - 6f * den, py + 12f * den, 11f * den, sa)
+                    drawStar(c, tw / 2f + 4f * den, py - size * 0.7f, 8f * den, sa)
+                }
+            }
+        }
+        c.restore()
     }
 
     // one bevelled block
