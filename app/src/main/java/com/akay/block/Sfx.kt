@@ -8,6 +8,7 @@ import android.os.Vibrator
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.Random
 import java.util.concurrent.ConcurrentHashMap
 
 // Sound effects are made here in code (no audio files). Vibration also lives here.
@@ -63,11 +64,12 @@ object Sfx {
         sp.play(id, vol, vol, 1, 0, 1f)
     }
 
-    fun tap() = play("tap", 0.8f)
+    fun tap() = play("tap", 0.9f)
+    fun pick() = play("pick", 1f)
     fun place() = play("place", 1f)
-    fun back() = play("back", 0.7f)
-    fun over() = play("over", 0.9f)
-    fun best() = play("best", 0.9f)
+    fun back() = play("back", 0.8f)
+    fun over() = play("over", 1f)
+    fun best() = play("best", 1f)
 
     // 1 line = combo chime, 2 lines = great, 3 lines = excellent, 4+ lines or empty board = perfect
     fun clear(combo: Int, lines: Int, perfect: Boolean) {
@@ -135,20 +137,21 @@ object Sfx {
             .setUsage(AudioAttributes.USAGE_GAME)
             .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
             .build()
-        val sp = SoundPool.Builder().setMaxStreams(8).setAudioAttributes(attrs).build()
+        val sp = SoundPool.Builder().setMaxStreams(10).setAudioAttributes(attrs).build()
         sp.setOnLoadCompleteListener { _, id, status ->
             if (status == 0) ready.add(id)
         }
         val all = LinkedHashMap<String, ShortArray>()
-        all["tap"] = toShorts(makeTap(), 0.9f)
-        all["place"] = toShorts(makePlace(), 0.9f)
-        all["back"] = toShorts(makeBack(), 0.9f)
-        for (lv in 1..3) all["clear$lv"] = toShorts(makeClear(lv), 0.9f)
-        all["great"] = toShorts(makeGreat(), 0.9f)
-        all["excellent"] = toShorts(makeExcellent(), 0.9f)
-        all["perfect"] = toShorts(makePerfect(), 0.9f)
-        all["over"] = toShorts(makeOver(), 0.9f)
-        all["best"] = toShorts(makeBest(), 0.9f)
+        all["tap"] = norm(makeTap(), 0.8f)
+        all["pick"] = norm(makeWhoosh(false), 0.85f)
+        all["place"] = norm(makeClick(), 0.95f)
+        all["back"] = norm(makeWhoosh(true), 0.7f)
+        for (lv in 1..3) all["clear$lv"] = norm(makeClear(lv), 0.9f)
+        all["great"] = norm(makeGreat(), 0.95f)
+        all["excellent"] = norm(makeExcellent(), 0.95f)
+        all["perfect"] = norm(makePerfect(), 1f)
+        all["over"] = norm(makeOver(), 0.9f)
+        all["best"] = norm(makeBest(), 0.9f)
         for ((name, data) in all) {
             val f = File(dir, "blk_$name.wav")
             writeWav(f, data)
@@ -195,13 +198,63 @@ object Sfx {
         }
     }
 
-    private fun toShorts(b: FloatArray, target: Float): ShortArray {
+    // a sine that dies away fast (used for clicks)
+    private fun tone(b: FloatArray, start: Double, f: Double, dur: Double, vol: Double, tau: Double) {
+        val s0 = (start * RATE).toInt()
+        val n = (dur * RATE).toInt()
+        for (i in 0 until n) {
+            val pos = s0 + i
+            if (pos >= b.size) break
+            val t = i / RATE.toDouble()
+            b[pos] += (Math.sin(2.0 * Math.PI * f * t) * Math.exp(-t / tau) * vol).toFloat()
+        }
+    }
+
+    // airy "whoosh": noise through a band-pass filter whose pitch glides up (or down when falling = true)
+    private fun makeWhoosh(falling: Boolean): FloatArray {
+        val dur = if (falling) 0.16 else 0.24
+        val n = (dur * RATE).toInt()
+        val b = FloatArray(n + 200)
+        val rnd = Random(7)
+        val f0 = if (falling) 2200.0 else 450.0
+        val f1 = if (falling) 600.0 else 2600.0
+        var low = 0.0
+        var band = 0.0
+        for (i in 0 until n) {
+            val t = i / n.toDouble()
+            val f = f0 + (f1 - f0) * t
+            val fc = 2.0 * Math.sin(Math.PI * f / RATE)
+            val x = rnd.nextDouble() * 2.0 - 1.0
+            low += fc * band
+            val high = x - low - 0.32 * band
+            band += fc * high
+            val env = Math.pow(Math.sin(Math.PI * t), 1.4)
+            b[i] = (band * env).toFloat()
+        }
+        return b
+    }
+
+    // crisp "click" with a small thud under it
+    private fun makeClick(): FloatArray {
+        val b = FloatArray((0.1 * RATE).toInt())
+        val rnd = Random(3)
+        val n = (0.008 * RATE).toInt()
+        for (i in 0 until n) {
+            b[i] += ((rnd.nextDouble() * 2.0 - 1.0) * Math.exp(-i / (0.0016 * RATE)) * 0.9).toFloat()
+        }
+        tone(b, 0.0, 2300.0, 0.035, 0.7, 0.005)
+        tone(b, 0.0, 1150.0, 0.05, 0.6, 0.009)
+        tone(b, 0.0, 200.0, 0.08, 0.55, 0.022)
+        return b
+    }
+
+    private fun norm(b: FloatArray, target: Float): ShortArray {
         var peak = 0f
         for (v in b) {
             val a = Math.abs(v)
             if (a > peak) peak = a
         }
-        val k = if (peak <= target) 1f else target / peak
+        val k = if (peak <= 0f) 1f else target / peak
         return ShortArray(b.size) {
             (b[it] * k * 32767f).toInt().coerceIn(-32768, 32767).toShort()
         }
@@ -230,19 +283,6 @@ object Sfx {
     private fun makeTap(): FloatArray {
         val b = FloatArray((0.1 * RATE).toInt())
         sweep(b, 0.0, 900.0, 600.0, 0.07, 0.6)
-        return b
-    }
-
-    private fun makePlace(): FloatArray {
-        val b = FloatArray((0.2 * RATE).toInt())
-        sweep(b, 0.0, 380.0, 190.0, 0.12, 0.9)
-        sweep(b, 0.0, 1400.0, 900.0, 0.025, 0.25)
-        return b
-    }
-
-    private fun makeBack(): FloatArray {
-        val b = FloatArray((0.12 * RATE).toInt())
-        sweep(b, 0.0, 520.0, 300.0, 0.08, 0.5)
         return b
     }
 
