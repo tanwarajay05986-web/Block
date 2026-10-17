@@ -37,6 +37,9 @@ class GameView(ctx: Context) : View(ctx) {
     private val den = ctx.resources.displayMetrics.density
     private var skin: Skin = Skins.cur()
 
+    // small tag at the bottom of the game screen, to check which build is installed
+    private val buildTag = "build 5"
+
     private val board = Array(N) { IntArray(N) }
     private val justPlaced = Array(N) { BooleanArray(N) }
     private val tray = arrayOfNulls<Piece>(3)
@@ -83,8 +86,9 @@ class GameView(ctx: Context) : View(ctx) {
     private var retFromT = 0f
     private var retFromS = 0f
 
-    // effects
-    private class Fade(val r: Int, val c: Int, val color: Int)
+    // effects. A cleared cell changes from its own colour (from) to the colour of the last piece (to),
+    // starting next to that piece and spreading along the line (delay)
+    private class Fade(val r: Int, val c: Int, val from: Int, val to: Int, val delay: Float)
     private class Spark(
         var x: Float, var y: Float, var vx: Float, var vy: Float,
         var life: Float, val color: Int, val size: Float
@@ -245,7 +249,7 @@ class GameView(ctx: Context) : View(ctx) {
             val r = order[k]
             for (c in 0 until N) {
                 if (board[r][c] != 0) {
-                    fades.add(Fade(r, c, board[r][c]))
+                    fades.add(Fade(r, c, board[r][c], board[r][c], 0f))
                     spawnSparks(r, c, board[r][c])
                     board[r][c] = 0
                 }
@@ -376,11 +380,17 @@ class GameView(ctx: Context) : View(ctx) {
             for (r in rows) for (c in 0 until N) set.add(r * N + c)
             for (c in cols) for (r in 0 until N) set.add(r * N + c)
             fades.clear()
-            // the whole completed line takes the colour of the piece that completed it
+            // the whole completed line takes the colour of the piece that completed it,
+            // starting from the piece and spreading outwards
             for (k in set) {
                 val rr = k / N
                 val cc = k % N
-                fades.add(Fade(rr, cc, pc.color))
+                var d = 99
+                for (cl in pc.cells) {
+                    val dd = Math.abs(rr - (r0 + cl[0])) + Math.abs(cc - (c0 + cl[1]))
+                    if (dd < d) d = dd
+                }
+                fades.add(Fade(rr, cc, board[rr][cc], pc.color, d * 0.03f))
                 spawnSparks(rr, cc, pc.color)
             }
             for (k in set) {
@@ -402,6 +412,7 @@ class GameView(ctx: Context) : View(ctx) {
             showPop(gain, lines, perfect, rows)
             if (lines >= 3 || combo >= 3 || perfect) shake()
             Sfx.vClear(combo, lines, perfect)
+            Sfx.place()
             Sfx.clear(combo, lines, perfect)
         } else {
             streak++
@@ -490,10 +501,10 @@ class GameView(ctx: Context) : View(ctx) {
         scoreAnim = a
     }
 
-    // the line effect runs for 0.7 s, then everything is cleared
+    // the line effect runs for 0.9 s: colour change (0 - 0.3), hold (0.3 - 0.62), fade away (0.62 - 1)
     private fun startFade() {
         fadeT = 0f
-        fadeAnim = anim(700, { fadeT = it }, {
+        fadeAnim = anim(900, { fadeT = it }, {
             fades.clear()
             glowRows.clear()
             glowCols.clear()
@@ -612,7 +623,7 @@ class GameView(ctx: Context) : View(ctx) {
                     liftAnim = anim(130, { liftT = it })
                     updateSnap()
                     invalidate()
-                    Sfx.tap()
+                    Sfx.pick()
                     Sfx.vPick()
                 }
             }
@@ -697,6 +708,12 @@ class GameView(ctx: Context) : View(ctx) {
         drawRet(c)
         drawDrag(c)
         drawPop(c, w)
+
+        tp.style = Paint.Style.FILL
+        tp.textAlign = Paint.Align.CENTER
+        tp.textSize = 10f * den
+        tp.color = 0x55FFFFFF
+        c.drawText(buildTag, w / 2f, height - 8f * den, tp)
 
         if (sparks.isNotEmpty()) postInvalidateOnAnimation() else lastNano = 0L
     }
@@ -899,30 +916,26 @@ class GameView(ctx: Context) : View(ctx) {
         }
     }
 
-    // the completed line: bright in the colour of the last piece, then it shrinks away
+    // the completed line: every block changes to the colour of the last piece (spreading from the piece),
+    // stays bright for a moment, then grows a little and fades away
     private fun drawFades(c: Canvas) {
         if (fades.isEmpty()) return
         val t = fadeT
-        val hold = 0.55f
+        val u = ((t - 0.62f) / 0.38f).coerceIn(0f, 1f)
+        val a = ((1f - u) * 255f).toInt()
+        val pulse = if (t >= 0.3f && t <= 0.62f) 0.04f * sin((t - 0.3f) / 0.32f * PI.toFloat()) else 0f
+        val k = 1f + 0.22f * u + pulse
         for (f in fades) {
-            val a: Int
-            val k: Float
-            if (t < hold) {
-                a = 255
-                k = 1f + 0.05f * sin(t / hold * PI.toFloat())
-            } else {
-                val u = (t - hold) / (1f - hold)
-                a = ((1f - u) * 255f).toInt()
-                k = 1f + 0.22f * u
-            }
             val s = cell * k
             val x = bl + f.c * cell - (s - cell) / 2f
             val y = bt + f.r * cell - (s - cell) / 2f
-            drawBlock(c, x, y, s, f.color, a)
-            val sheen = (if (t < 0.3f) 150f * (1f - t / 0.3f) else 0f) + (if (t < hold) 30f else 0f)
-            if (sheen > 0f) {
+            val conv = ((t - f.delay) / 0.07f).coerceIn(0f, 1f)
+            if (conv < 1f) drawBlock(c, x, y, s, f.from, a)
+            if (conv > 0f) drawBlock(c, x, y, s, f.to, (a * conv).toInt())
+            val flash = sin(conv * PI.toFloat()) * 130f * (a / 255f)
+            if (flash > 1f) {
                 p.style = Paint.Style.FILL
-                p.color = withAlpha(Color.WHITE, (sheen * a / 255f).toInt())
+                p.color = withAlpha(Color.WHITE, flash.toInt())
                 rf.set(x, y, x + s, y + s)
                 c.drawRect(rf, p)
             }
@@ -935,7 +948,7 @@ class GameView(ctx: Context) : View(ctx) {
         val t = fadeT
         val inten = when {
             t < 0.12f -> t / 0.12f
-            t > 0.6f -> (1f - t) / 0.4f
+            t > 0.62f -> (1f - t) / 0.38f
             else -> 1f
         }
         if (inten <= 0f) return
